@@ -31,6 +31,13 @@ breaklines,
 breakafter=d,
 linenos
 }
+\newminted[codebash]{bash}{frame=single, 
+framesep=2mm,
+baselinestretch=1.2,
+breaklines, 
+breakafter=d,
+linenos
+}
 
 \begin{document}
 \maketitle
@@ -68,7 +75,7 @@ It can be argued that the OS is not strictly necessary because it's possible to 
 
 Windows, MacOS, iOS, Android... Most of us are familiar with these operating systems. Besides the platform on which they run, they are all general-purpose and their goal is the same; what really changes is the architecture and philosophy in their design. At a macroscopic level they differ in kernel design approach (monolithic kernel vs hybrid kernel), but we need to wait until the next section to see what this means. At a microscopic level, there is literally not much to see because the code of most OSes is closed, so it's impossible to see the implementation differences with Linux. This leads us to one of the peculiarities of Linux: it's completely open source and community developed. Besides---not really interesting---ethical matters, this means that it's possible to study the code and get a full understanding of operating systems. In fact, before Linux, there was no way to see how operating systems work in practice. The only option was to study them from textbooks in order to implement your own kernel, which is exactly what Linus Torvalds did.
 
-We said earlier that a key component of an OS is ``the software intended to manage the hardware resources'': this is what we refer as the \textit{kernel}. Dennis Ritchie, the creator of Unix and C, also called it the ``Operating system proper''\cite{ritchie}, which most likely means ``The component that is the actual operating system''. One one hand it's true, because the low level tasks performed by the kernel are essential (and also because it's the most difficult component to develop), but on the other, without application software the kernel is useless. You can load a kernel at boot, then it initializes and starts running, and then there is nothing but a black screen because there is no other program to start. So no, it's not an operating system by itself, but what Dennis meant is that when you think about the core architecture of an OS, you think about the kernel. An engine is indeed useless without the rest of the car, but does that make the other components as important as the engine, where all the complexity resides? Despite the application software being the largest part of the OS; it is within the kernel that the hardest engineering challenges are found, which makes it the most interesting---and difficult---part to understand and analyze.
+We said earlier that a key component of an OS is ``the software intended to manage the hardware resources'': this is what we refer as the \textit{kernel}. Dennis Ritchie, the creator of Unix and C, also called it the ``Operating system proper''\cite{ritchie}, which most likely means ``The component that is the actual operating system''. On one hand it's true, because the low level tasks performed by the kernel are essential (and also because it's the most difficult component to develop), but on the other, without application software the kernel is useless. You can load a kernel at boot, then it initializes and starts running, and then there is nothing but a black screen because there is no other program to start. So no, it's not an operating system by itself, but what Dennis meant is that when you think about the core architecture of an OS, you think about the kernel. An engine is indeed useless without the rest of the car, but does that make the other components as important as the engine, where all the complexity resides? Despite the application software being the largest part of the OS; it is within the kernel that the hardest engineering challenges are found, which makes it the most interesting---and difficult---part to understand and analyze.
 
 \section{A general overview} 
 \label{sec:general}
@@ -112,7 +119,14 @@ Registers are used to pass the parameters because this way it's easier to get th
 Another peculiarity of the kernel is that it uses its own implementation of the functions in the standard C library. For example \verb|printf()| and \verb|malloc()| are implemented as \verb|printk()| and \verb|kmalloc()|. There are different reasons for this choice, one of those is that the C standard library is too big and inefficient for the kernel. Another reason is that implementing your own functions gives more freedom because they can be customized for their purpose in the kernel. Memory allocation in user or kernel space is very different, so the \verb|kmalloc()| implementation is very specific. For instance, kernel data structures need a contiguous physical memory segment to be allocated, while regular user space allocation doesn't have this restriction. Furthermore, \verb|printk()| writes its output into the kernel log buffer (that you can read by using the \verb|dmesg| command in user space); this is very different from \verb|printf()| that writes on standard output.
 
 \subsection{A monolithic design}
+TODO
 %TODO, be brief, this is not so important but it's interesting
+
+\begin{figure}[ht]
+\includegraphics[width=25cm, keepaspectratio]{images/monolithic.png}
+\caption{The most popular kernel designs and their differences}
+\label{img:monolithic}
+\end{figure}
 
 \subsection{User and kernel stacks} Before we begin, one last thing is important to understand. We already said that memory management in kernel/user space is different: the same is true about execution. Every process in the system has two stacks, located respectively in user and kernel space, and it will use one of the two while executing in the respective privilege mode. x86 CPUs automatically switch stack pointers when privilege mode switches occur, which usually happens for syscalls. The user space stack can potentially be very big, with a very high limit (8mb on my machine, but it can be increased), and even though it's initially small it can allocate more physical memory as it needs it. This mechanism is called ``on-demand paging'', we will discuss this topic and virtual memory in section \ref{sec:core}. The kernel stack, unlike the user stack, does not have the luxury to expand itself and has a fixed size of two pages. 32-bit and 64-bit systems have 4kb and 8kb sized pages, respectively, so the stack size is 8kb or 16kb. These two pages must be allocated contiguously, which can cause memory fragmentation for long system uptimes as stacks get deallocated. In other words, it becomes increasingly hard to find two physically contiguous unallocated pages as the OS runs for a long time. This is why in the past efforts have been made to reduce the stack size to one page, which would eliminate fragmentation, but after many stack overflows the standard settled on two pages. 
 
@@ -124,7 +138,8 @@ This leads us to an interesting example of the kernel trusting itself: it makes 
 \label{img:stack}
 \end{figure}
 
-It's important to note that there are special processes called \textit{kernel threads} that do not follow this pattern of kernel/user stack. Kernel threads perform a specific system task, they are created by the kernel and they live exclusively in kernel space, never switching to user mode. Their address space is the whole kernel space and they can use it however they want. Besides this, they are normal and fully schedulable tasks just like the others. An example of a kernel thread is \verb|ksoftirqd|: there is always one for each CPU and their job is to dispatch interrupt requests. As a side note, the name stands for ``Kernel Software Interrupt ReQuest Daemon'', many kernel threads follow a similar naming convention. %mention per-CPU kernel stacks for handlers?
+It's important to note that there are special processes called \textit{kernel threads} that do not follow this pattern of kernel/user stack. Kernel threads perform a specific system task, they are created by the kernel and they live exclusively in kernel space, never switching to user mode. Their address space is the whole kernel space and they can use it however they want. Besides this, they are normal and fully schedulable tasks just like the others. An example of a kernel thread is \verb|ksoftirqd|: there is always one for each CPU and their job is to dispatch interrupt requests. As a side note, the name stands for ``Kernel Software Interrupt ReQuest Daemon'', many kernel threads follow a similar naming convention. 
+%Maybe mention per-CPU interrupt stacks? (for interrupt handlers)
 %Interrupt stacks - To rectify this problem, the kernel developers implemented a new feature: interrupt stacks. Interrupt stacks provide a single per-processor stack used for interrupt handlers. With this option, interrupt handlers no longer share the kernel stack of the interrupted process. Instead, they use their own stacks. This consumes only a single page per processor.
 \section{Process management}
 The kernel is divided into subsystems that interact with each other. Figure \ref{img:kernelmap} is a zoom into the kernel mechanisms inside the red part of Figure \ref{img:userspace_kernelspace}. The image represents the part of the kernel that will be covered, for the most part we will swing between the scheduling and memory mapping subsystems. The names in the picture are structs, functions or source code files; we will get familiar with most of these as we go on.
@@ -392,13 +407,11 @@ if(tsk->state & (TASK_INTERRUPTIBLE | TASK_UNINTERRUPTIBLE))
 \chapter{The scheduler}
 \label{ch:sched}
 
-As we have seen before, the CPU can only execute one task at a time and even on multiprocessors systems, the number of task will be in most cases larger than the number of cores. For this reason we need a system to alternate the execution of the tasks, but how do we chose which task to run? This is the job of the scheduler, which we will now explore.
+As we have seen before, the CPU can only execute one task at a time and even on multiprocessors systems, the number of task will be, in most cases, larger than the number of cores. For this reason we need a system to alternate the execution of the tasks, but how do we chose which task to run? This is the job of the scheduler, which we will now explore.
 
-\section{Objectives of the scheduler}
+\section{Introduction}%maybe to change
 
-
-% Citare altre schedulng class: SCHED_FIFO, SCHED_RR, SCHED_DEADLINE
-
+\subsection{Objectives of the scheduler}
 
 The scheduler cannot simply choose the tasks in any order, there are some tasks that are highly time sensitive and needs to be executed as fast as possible, and tasks that can wait longer without any consequence The scheduler has to take this and many other aspects into consideration before making a decision.
 
@@ -412,63 +425,126 @@ Obviously we can have different types of tasks: a text editor, for example, will
 %throughput
 At the same time we want to do as few context switches as possible. Every time the scheduler performs one the CPU is not being used by any task. On the long run, if we perform frequent context switches, this will have an impact on the performance of the system. The \textbf{throughput} is the total amount of work completed in a unit of time, and we also want to maximize this value.
 
-\paragraph{Fairness}
-The scheduler should also try to achieve fairness, in the long run two task with the same priority should run for roughly the same amount of time. And it should be proportional to the runtime of tasks with other priorities. The scheduler should also be starvation free, meaning that every task should get at least some cpu time.
+\paragraph{Fairness and Starvation}
+The scheduler should also try to achieve fairness, this means that in the long run two task with the same priority should run for roughly the same amount of time. A task with a higher priority should have the precedence over a task with a lower one, but at the same time every task should get at least some CPU time. A process that doesn't get any CPU time is said to "starve", we want our scheduler to be starvation-free.
 
-\paragraph{Different workloads}
-Linux is used in all sort of machine, from desktop computer to high-end servers to mobile devices and the types of workloads can be very different. The scheduler should have good results in every scenario.
+\subsection{Different workloads}
+Linux is used in all sort of machine, from desktop computer to high-end servers to mobile devices and the types of workloads can be very different. The scheduler should have good results in every scenario. To achieve this flexibility linux implements scheduling classes, an extensible hierarchy of scheduler modules. These modules encapsulate scheduling policy details \cite{CFS_announcement}. A task from a scheduling class can be run only if there are no runnable tasks in the higher priority classes. The classes are organized in this order: 
+\begin{itemize}
+    \item \verb|SCHED_DEADLINE| implemented in \verb|sched/deadline.c|
+    \item \verb|SCHED_FIFO| and \verb|SCHED_RR| implemented i \verb|sched/rt.c|
+    \item \verb|SCHED_NORMAL|, \verb|SCHED_BATCH| and \verb|SCHED_IDLE| \newline implemented in \verb|sched/fair.c|%fix
+\end{itemize}
+
+\verb|SCHED_FIFO| if a cooperative policy, first come first served. The tasks are executed in the order of arrival, a running task can be preempted if another task with higher priority becomes runnable. When a \verb|SCHED_FIFO| task becomes runnable it is inserted at the end of the list of its priority.
+
+\verb|SCHED_RR| is a round-robin policy. It's similar to \verb|SCHED_FIFO| but it uses round-robin to cycle trough all the tasks with the same priority. Each task can run only for a maximum timeslice then it is preempted and put at the end of list of its priority. As for \verb|SCHED_FIFO| if a higher priority task becomes runnable the current task is preempted.
+
+\verb|SCHED_DEADLINE| is the highest priority policy. A task with this policy defines a deadline, before which the task has to finish its execution. The scheduler guarantees that the deadline is respected. To do that, when the policy or the attributes are changed, the scheduler checks the feasibility of the change, if, for example, the cpu is too busy it return an error.
+
+\verb|SCHED_NORMAL| is the default policy that is used for regular tasks and uses CFS, we will se later in more detail how CFS works.
+
+\verb|SCHED_BATCH| is similar to \verb|SCHED_NORMAL| but it will preempt less frequently, for this reason it is more suited for non-interactive workloads.
+
+\verb|SCHED_IDLE| is for task with very low priority.
+
+\begin{tabular}{|c|c|}
+\hline
+\textbf{Scheduling classes} & \textbf{Scheduling policies}\\
+\hline
+stop\_sched\_class &\\
+\hline
+dl\_sched\_class   & SCHED\_DEADLINE\\
+\hline
+rt\_sched\_class   & SCHED\_FIFO \\
+                   		   & SCHED\_RR\\
+\hline
+fair\_sched\_class & SCHED\_NORMAL\\
+                   & SCHED\_BATCH\\
+                   & SCHED\_IDLE\\
+\hline
+idle\_sched\_class &\\          
+\hline
+\end{tabular}
+
+
+\paragraph{Priorities}
+Each task has a priority associated with it, the first priorities corresponds to real-time tasks and are scheduled with the \verb|SCHED_FIFO| or \verb|SCHED_RR| policy. Normal tasks have are scheduled with the \verb|SCHED_NORMAL|, \verb|SCHED_BATCH| and \verb|SCHED_IDLE|, these have a priority (called nice) that ranges from -20 to 19, -20 being the highest priority and +19 the lowest. The behaviour of different nice levels depends on the version of the scheduler.
 
 \label{sec:cfs}
-\section{Why CFS?} 
-%CFS philosophy
-%What are the improvements?
-% Probably just a bit of history about past schedulers such as O(1) and BFS
-% Also actual reasons why CFS is good
-% Problem when deciding which scheduler should be implemented: many people will be unhappy
-
-\subsubsection{O(1) Scheduler}
-
+\section{Prior to CFS} 
 CFS is the default scheduler of linux since the 2.6.23 release, as a replacement for the O(1) scheduler. To understand the advantages of CFS we first need to understand how the previous version works.
 
+\subsection{O(1) Scheduler}
+The runnable tasks are stored in two priority queues, an active and an expired queue. At the beginning all the task are inside the active queue, the tasks run on the CPU, in order of priority, for the assigned timeslice, when a task finishes its timeslice it's moved into the expired queue. Once all the tasks have finished their timeslice, the two queues swap role and the process starts again.
+
+The goals of the new scheduler were to keep all the positive aspects of the old scheduler, like good interactive performance and fairness, while improving the scalability. This was achieved using only algorithms with constant complexity O(1).
+
 \paragraph{Priority} %What is the priority of a task
-Each task has a priority which consists of a static and a dynamic priority. The static priority, which corresponds to the nice value, can have a value from -20 to 19, -20 being the highest priority and 19 the lowest. The dynamic priority ranges from -5 to +5, it is based on the interactiveness of the task: an interactive task (I/O bound) gets an higher priority than a non-interactive one (CPU bound). The scheduler uses an heuristic method to determine the interactiveness of a task, it is done by keeping track of the amount of time that a task spend sleeping.
+Each user task has a priority which consists of a static and a dynamic priority. The static priority, which corresponds to the nice value, can have a value from -20 to 19, -20 being the highest priority and 19 the lowest. The dynamic priority ranges from -5 to +5, it is based on the interactiveness of the task: if task spend a large amount of time sleeping, the scheduler will boost its priority, on the other side, if the process doesn't sleep much, it will get penalized.
 
 \paragraph{Timeslice} %How are timeslices calulated
 The O(1) scheduler is based on the concept of timeslice, this is the amount of time that a task runs on the CPU. Each priority level is mapped to a different timeslice, high priorities get mapped to bigger timeslices while low priorities get mapped to smaller timeslices. 
-%TODO: add brief introduction to time
 
-\paragraph{} %How O(1) works and downsides
-The runnable tasks are stored in two priority queues, an active and an expired queue. At the beginning all the task are inside the active queue, the tasks run on the CPU, in order of priority, for the assigned timeslice, when a task finishes its timeslice it's moved into the expired queue. Once all the tasks have finished their timeslice, the two queues swap role and the process starts again.
+\paragraph{Interactive Task}
+A process that is marked as interactive will be reinserted in the active queue after it has expired its current timeslice. A task is marked as interactive depending on its dynamic priority and its nice value. A task with a nice value of -20 it's marked as interactive even if it has a dynamic priority of +3, while a task with a nice value of 0 has to have a dynamic priority of -2. With a nice level of +19 it is impossible for a task to be marked as interactive, no matter the dynamic priority.
 
-(Needs to develop further)[In the O(1) scheduler the timeslices are calculated independently from the load of the system, if only two low priority tasks are present, they both get assigned a short timeslice. This results in more frequent context switches than necessary which slows down the system. To guarantee good interactiveness the O(1) scheduler uses complex heuristics to determine if a task is interactive or not. This results in more complex code and doesn't resolve the problem entirely.]
+This system made made the scheduler behave unpredictably and could cause some tasks to be marked as interactive even when they are not.
 
-\subsubsection{Rotating Staircase DeadLine}
+\subsubsection{Nice levels}%TODO: add source https://www.kernel.org/doc/Documentation/scheduler/sched-nice-design.txt
+Prior to the introduction of the O(1) scheduler, tasks with a nice of 19 were using too much CPU time and people were complaining, so O(1) was specifically designed in such a way that the timeslice for those tasks would be 1 jiffy, the minimum measurable amount of time. (For more detail about timekeeping see \ref{timekeeping}).
 
-Con Kolivas proposed a new scheduler that that tries to solve the problems of the O(1) scheduler. The goal was to design a scalable scheduler that was completely fair to all processes and allowed the best possible interactivity.
+\begin{tikzpicture}
+  \begin{axis}[
+    title = nice to timeslice conversion,
+    xlabel = nice,
+    ylabel = timeslice] 
+ \addplot[domain=-20:0, color=red] {4*100*(140-(120+x))/20}; 
+ \addplot[domain=0:19, color=green] {100*(140-(120+x))/20};
+ \end{axis}
+\end{tikzpicture}
+%to verify, that "jump" is odd, but the code for the old scheduler seems to confirm it.
+
+The amount of time corresponding to a jiffy depends on the tick rate which corresponds to the value of HZ. With the advancements of computer hardware this value increased. With a value of 1000 HZ, a jiffy is equivalent to 1 msec, meaning that a task with nice +19 would get a timeslice of only  1 msec and this would cause too frequent rescheduling (causing problems like cache trashing). The value of the minimum timeslice can be adjusted, but it is still HZ dependant.
+
+Another problem, that can be seen in the graph above, is that the behavior of the nice level depends on the absolute value of the nice, but, historically, when we change the nice value of a process we can't set the absolute value but only increment or decrease it by a relative amount. Now a \verb|setpriority()| method exists, that can set the absolute nice value, but we still prefer a relative behaviour. This means that with the \verb|O(1)| scheduler, calling \verb|nice(1)| to increment the nice level of a task has different effects depending on the initial value.
+
+The last problem was that tasks with negative nice were not responsive enough, this was problematic for multimedia application that had to use \verb|SCHED_FIFO|, but this caused other problem because \verb|SCHED_FIFO| is not starvation proof.
+
+\subsection{Rotating Staircase DeadLine}
+Con Kolivas proposed a new scheduler that tries to solve the problems of the O(1) scheduler. The goal was to design a scalable scheduler that was completely fair to all processes and allowed the best possible interactivity.
 
 The Rotating Staircase DeadLine scheduler or RSDL assigns a quota of runtime based on the priority of the task. The task at the highest priority level are then executed round-robin with each other, when a task finishes it's quota it is moved to the next priority level and it's given a new quota. The entire priority level also has an assigned quota, when that quota expires, all the process in this priority level are moved to the next one. When a task finishes all its quotas at each priority level, it is moved to the expired queue. When all the task have finished their quota, the expired queue becomes active and the process starts again.
 
-RSDL doesn't measure the sleep time of the tasks in order to identify interactive tasks, those tasks spend most of the time sleeping so they consume a little portion of their quota. When they get woken up, they will probably be at a high priority level meaning that, in most cases, they only have to wait for the task in the current runqueue's priority level. This guarantees a low latency for interactive tasks. 
+RSDL doesn't measure the sleep time of the tasks to identify interactive tasks, those tasks spend most of the time sleeping so they consume a little portion of their quota. When they get woken up, they will probably be at a high priority level meaning that, in most cases, they only have to wait for the task in the current runqueue's priority level. This guarantees a low latency for interactive tasks. 
 
-\subsubsection{CFS}
+\subsection{CFS}
 The CFS scheduler was developed by Ingo Molnár, he was inspired by the \textit{Rotating Staircase Deadline} scheduler developed by Con Kolivas. 
 
 CFS does not use fixed timeslices and does not use any heuristic method to calculate the priority of a task. It tries to model an ideal multitasking CPU on real hardware. Ideally every task receives 1/n of the processor's time, where n is the number of runnable tasks. This results in simpler code that can handle nice values better than the previous scheduler, the preemption time is no longer fixed like in the O(1) scheduler, but it is variable.
+
+This approach solves the problem found in the O(1) scheduler, the behaviour of nice level is more consistent and independent from the tick-rate. Increasing the nice value by one has the same effect regardless of the starting value.
 
 In the following section we look in more detail how CFS works.
 
 \section{How does CFS work?} 
 
-As we already said, CFS tries to simulate an ideal multitasking CPU. Each process gets assigned a portion of the CPU depending on their weight, the weight is determined by the priority of the task (nice value).
+As we already said, CFS tries to simulate an ideal multitasking CPU. Each process gets assigned a portion of the CPU depending on their weight,which is determined by the priority of the task (nice value).
 
-\paragraph{Weight}
+\subsection{Weight function}
 According to the documentation the weight is roughly equivalent to: $\dfrac{1024}{(1.25)^{nice}}$. This way an increase of 1 in the nice value roughly translates to a 10\% increase in CPU (with same load condition).%?
 
-Write examples here, for 2 processes same nice and 2 processes with 1 nice difference
+This means that if there are only 2 processes with the same nice value, they will get both $50\%$ of CPU time. If we increase the nice of one of the processes by one then it will get $55\%$ of CPU time while the other will get only $45\%$.
 
-Plot the function here
+\begin{tikzpicture}
+  \begin{axis}[
+    xlabel = nice,
+    ylabel = weight/1024,
+    title = weight function] 
+ \addplot[domain=-20:19, color=red] {1/(5/4)^x)}; 
+ \end{axis}
+\end{tikzpicture}
 
-%TODO: add explanation for this formula
 Let's write the weight formula in a more readable format.
 \begin{equation}
     w(n) = \frac{2^{10}}{(\frac{5}{4})^{n}}
@@ -496,32 +572,47 @@ We have now a function to calculate the $CPU_\%$ of a process given a difference
     CPU_\%(d)=\frac{1}{1+\left(\dfrac{4}{5}\right)^{d}}
 \end{equation}
 
-Let's plot this function.TODO
+Let's plot this function.
 
-% \begin{tikzpicture}
-%   \begin{axis}[] 
-%     \addplot {1 / (1 + (4/5)^x)}; 
-%   \end{axis}
-% \end{tikzpicture}
+\begin{tikzpicture}
+  \begin{axis}[
+    xlabel = nice difference,
+    ylabel = cpu percentage,] 
+ \addplot[domain=-20:19, color=red] {1 / (1 + (4/5)^x)}; 
+ \end{axis}
+\end{tikzpicture}
 
 Finally, we derive in 0 and we get $0.5log(5/4)$, which is roughly equivalent to 0.11157. This is the 10\% increase that was referred by the comments in the code.
 
-\paragraph{Assigned time}
-The actual time of CPU that the task gets is determined by the weight of the task, the total weight of all the tasks in the run queue, the \textit{target latency} and the \textit{minimum granularity}. 
+\subsection{Assigned time and virtual runtime}
 
-\textit{Target latency} is the period of the scheduler and it's a tunable value, CFS tries to schedule every runnable task at least once in this period. 
+We a function to assign a weight for each nice level, but for how long does each run task run, what is the actual time that a task will spend running?
 
-\textit{Minimum granularity} is the minimum amount of time that can be assigned to a task, this is done to prevent small timeslices that would result in a higher switching cost.
 
-The time assigned to a task is then equal to: $(target latency) * ((task's weight)/(total weight))$. %TODO: fix format
+The CPU time of a task is determined by the weight of the task, the total weight of all the tasks in the run queue, the \textit{target latency} and the \textit{minimum granularity}. 
+
+The \textit{Target latency} is a tunable value and it's the period of the scheduler, which means that CFS tries to schedule every runnable task at least once during this period. 
+
+The \textit{Minimum granularity} is the minimum amount of time that can be assigned to a task, this is done to prevent small timeslices that would result in a higher switching cost.
+
+We already discussed what is the weight of a task. Given these values, the time assigned to a task is then equal to: 
+
+\begin{equation}
+    assigned\_time = target\_latency * \frac{task\_weight}{total\_weight}
+\end{equation}
 
 \paragraph{vruntime}
 
-Tasks can be preempted at any time so, in order to know which task deserves to be run next, the scheduler needs to keep track of the amount of time that a task has spent running. This time is then weighted with the weight discussed before. This value is called the virtual runtime. The general formula for calculating the virtual runtime is: \\$delta\_exec * weight\_of\_nice\_0 / task\_weight$ %TODO: fix
+Tasks can be preempted at any time so, in order to know which task deserves to be run next, the scheduler needs to keep track of the amount of time that a task has spent running. This time is then weighted with the weight discussed before. This value is called the virtual runtime. The general formula for calculating the virtual runtime is:
+\begin{equation}
+    vruntime = delta\_exec * \frac{weight\_of\_nice\_0}{task\_weight}
+\end{equation}
 
-If the nice value of the task is 0, then the virtual runtime is equivalent to the actual time spent running on the CPU.
+Where \verb|delta_exec| is the actual amount of time that the task spent running and \verb|weight_of_nice_0|, as the name suggests, is the weight corresponding to a task with nice zero.
 
-If the nice value is less than 0, then the virtual runtime will be smaller the the actual runtime. This means that the vruntime of an high priority task will increase more slowly than the vruntime of a low priority one. So, in order to keep all the virtual runtimes at the same level the high priority task will have to run for more time.
+If the nice value of the task is 0, the fraction has value 1 and the virtual runtime is equivalent to the actual time spent running on the CPU.
+
+If the nice value is less than 0, then the virtual runtime will be smaller than the actual runtime. This means that the virtual runtime of an high priority task will increase more slowly than the vruntime of a low priority one. So, in order to keep all the virtual runtimes at the same level the high priority task will have to run for more time.
 
 On the other hand, if the nice value is more than 0, the virtual runtime will increase faster.
 
@@ -529,7 +620,267 @@ On the other hand, if the nice value is more than 0, the virtual runtime will in
 
 As we said before, the goal of CFS is to be as fair as possible with all the task. This means keeping all the task's vruntime as close as possible to each other. Following this logic, the task that deserves more than anyone to be executed next, is the one with the smallest vruntime.
 
-% Spostare in Implementation il Red-Black tree
+
+\chapter{Tracing with ftrace} %Maybe move this section 
+%If this section in placed here, explain why we need to introduce ftrace %Before implementation we need to know what ftrace is ...
+\label{chap:ftrace}
+% (1) "Fare debugging del kernel e` molto difficile..."
+% (2) "Gli eventi del kernel che solitamente si vuole monitorare sono
+% talmente frequenti che e` necessario utilizzare un meccanismo
+% estremamente lightweight..."
+% (3) "ftrace offre questa possibilita` essendo integrato nel kernel
+% stesso..."
+% (4) "E` possibile abilitare il tracing selezionando evnti..."}
+
+Kernel debugging is a big challenge even for the most experienced kernel developers. The problem is that if the system has, for example, latencies or synchronization issues (undetected race conditions), it's really hard to pinpoint where they're coming from. Which subsystems are involved? In which conditions does the problem arise? When the system is running, not always there is a way to know the answer. Ftrace is a debugger designed specifically to solve the issue and make the developer's life easier. It's also a great educational tool, not just to peek at what happens in the kernel, but also to help approach the source code by observing the function flow.
+
+The name comes from ``function tracer'', which is one of its features, but it has many others. Each mode of tracing is simply called a \textit{tracer}, and each one comes with many options to tweak it. They can do function tracing, event tracing, measure context switch time or the time in which interrupts are disabled. Ftrace is also very extensible because it's possible to write new tracers that can be added like a module.
+
+As anticipated, one of the objectives of the thesis is to document events related with scheduling. To understand what they do and why they are useful, it's necessary to understand ftrace, which is the tool that uses them.
+\section{How does it work?}
+% In addition to the function tracer, there is the sched\_switch tracer that tracks and reports on context switches in the kernel, showing process wakeups along with when they get scheduled.
+
+Tracing means ...
+
+While tracing, the events that need to be monitored are so frequent that an extremely lightweight mechanism is needed. Ftrace offers this possibility because it's self-contained and entirely implemented in the kernel, requiring no user space tools whatsoever.
+
+There are two main ways of using ftrace (and similar kernel debuggers):
+\begin{itemize}
+    \item Function tracing, using software profiling
+    \item Event tracing, using tracepoints in the code
+\end{itemize}
+% explain code profiling
+%Code injeciton: First generates overhead, the second does not, gcc -pg
+
+\begin{verbatim}
+AudioIPC-1849  [002] 21448.743195: sched_stat_runtime:   comm=AudioIPC Callba pid=1849 runtime=104248 [ns] vruntime=3462508278368 [ns]
+AudioIPC-1849  [002] 21448.743174: sched_migrate_task:   comm=AudioIPC Client pid=26778 prio=120 orig_cpu=3 dest_cpu=0
+\end{verbatim}
+
+\section{Interfacing with ftrace}
+% The entire runtime interaction with ftrace is performed through readable and writable virtual files contained in a specifically mounted debugfs file system; as a result, ftrace requires no specialized userspace utilities to operate
+
+\begin{codebash}
+# Interfacing through an application program
+sudo trace-cmd record -p function -P 622
+sudo trace-cmd report
+# Interfacing through the filesystem
+cd /sys/kernel/debug/tracing
+echo 622 > set_ftrace_pid
+echo function > current_tracer
+cat trace
+\end{codebash}
+This is a good example of the different ways of communication from user to kernel space. Both approaches trace the process with pid 621
+is actually interfacing with the debugfs filesystem
+
+\verb|mount -t debugfs nodev /sys/kernel/debug/|
+\begin{figure}[ht]
+\includegraphics[width=\textwidth]{images/shell_proc.png} 
+\caption{The procfs special filesystem}
+\label{img:proc}
+\end{figure}
+
+\begin{figure}[ht]
+\includegraphics[width=\textwidth]{images/shell_tracing.png} 
+\caption{Tracing folder inside the debugfs special filesystem}
+\label{img:tracing}
+\end{figure}
+
+\begin{figure}[ht]
+\includegraphics[width=\textwidth]{images/shell_tracers.png} 
+\caption{Types of tracers, only a few are available on by system by default (Debian)}
+\label{img:tracers}
+\end{figure}
+
+\section{Ftrace usage}
+
+\subsection{Function tracing}
+Let's write a simple script that traces any input process.
+\begin{codebash}
+#!/bin/bash
+# traceprocess.sh
+echo $$ > /sys/kernel/debug/tracing/set_ftrace_pid
+# echo every function to filter
+echo __do_page_fault > /sys/kernel/debug/tracing/set_ftrace_filter
+echo function > /sys/kernel/debug/tracing/current_tracer
+exec $*
+\end{codebash}
+\verb|$$| is the variable that contains the pid of the script itself, and \verb|$*| are the arguments of the script: in this case, the process to trace. The way it works is very simple:
+\begin{enumerate}
+    \item Set this pid as the one that will be traced
+    \item Set the \verb|__do_page_fault| as the only function to trace
+    \item Set the tracer to the function tracer
+    \item Execute the input program
+    \item The executed program will be a child of the script itself, so its pid will automatically be added to \verb|set_ftrace_pid| and it will be traced
+\end{enumerate}
+In the kernel, every routine that starts with ``\verb|do_|'' is an interrupt handler: in this case, we traced the interrupt handler for page faults by using a filter. Usually, we would see every kernel function that the input process calls, which is sometimes a really big and uninformative output that needs filtering. The trace output can be found in the file \verb|/sys/kernel/debug/tracing/trace|, or can be viewed as it gets written in \verb|/sys/kernel/debug/tracing/trace_pipe|. The following is an output of \verb|./traceprocess.sh ls|, which traces \verb|ls|.
+\begin{verbatim}
+# tracer: function
+#
+# entries-in-buffer/entries-written: 92/92   #P:4
+#
+#                      _-----=> irqs-off
+#                     / _----=> need-resched
+#                    | / _---=> hardirq/softirq
+#                    || / _--=> preempt-depth
+#                    ||| /     delay
+#   TASK-PID   CPU#  ||||    TIMESTAMP  FUNCTION
+#      | |       |   ||||       |         |
+      ls-4973  [000] d... 14386.659663: __do_page_fault <-page_fault
+      ls-4973  [000] d... 14386.659718: __do_page_fault <-page_fault
+      ls-4973  [000] d... 14386.659743: __do_page_fault <-page_fault
+      ls-4973  [000] d... 14386.659784: __do_page_fault <-page_fault
+      ls-4973  [000] d... 14386.659800: __do_page_fault <-page_fault
+      # ... many more page faults ...
+      ls-4973  [000] d... 14386.662473: __do_page_fault <-page_fault
+      ls-4973  [000] d... 14386.662871: __do_page_fault <-page_fault
+      ls-4973  [000] d... 14386.662881: __do_page_fault <-page_fault
+      ls-4973  [000] d... 14386.662900: __do_page_fault <-page_fault
+
+\end{verbatim}
+As expected, we only see page faults (for a total of 92). This information is not that useful by itself, but what is useful, instead, are the timestamps: with these, it's easy to detect latencies in the kernel. By using kernelshark you can plot the trace in order to make latencies obvious; doing this can also be interesting because it lets you see which actions cause most overhead. Another way of doing this just with ftrace is to use the \verb|function_graph| tracer: it's similar to the \verb|function| tracer, but it shows the entry and exit point of each function, creating a function call graph. Instead of timestamps it shows the duration of each function execution. The symbols \verb|+|, \verb|!| \verb|#| are used whenever there is an execution time greater than 10, 100 and 1000 microseconds. As we know, scheduling and thread migration cause a lot of overhead so we can try to use \verb|function_graph| to see it.
+\begin{verbatim}
+ 2)               |            schedule() {
+ 2)   0.033 us    |              rcu_note_context_switch();
+ 2)   0.028 us    |              _raw_spin_lock();
+ 2)               |              deactivate_task() {
+ 2)   0.032 us    |                update_rq_clock.part.84();
+ 2)               |                dequeue_task_fair() {
+ 2)               |                  dequeue_entity() {
+ 2)               |                    update_curr() {
+ 2)   0.030 us    |                      update_min_vruntime();
+ 2)   0.060 us    |                      cpuacct_charge();
+ 2)   0.654 us    |                    }
+ 2)   0.029 us    |                    clear_buddies();
+ 2)   0.033 us    |                    account_entity_dequeue();
+ 2)   0.041 us    |                    update_cfs_shares();
+ 2)   0.027 us    |                    update_min_vruntime();
+ 2)   2.188 us    |                  }
+ 2)   0.030 us    |                  hrtick_update();
+ 2)   2.767 us    |                }
+ 2)   3.362 us    |              }
+ 2)               |              pick_next_task_fair() {
+ 2)   0.028 us    |                __msecs_to_jiffies();
+ 2)   0.353 us    |              }
+ 2)               |              pick_next_task_idle() {
+ 2)               |                put_prev_task_fair() {
+ 2)               |                  put_prev_entity() {
+ 2)   0.029 us    |                    check_cfs_rq_runtime();
+ 2)   0.323 us    |                  }
+ 2)   0.608 us    |                }
+ 2)   0.036 us    |                update_idle_core();
+ 2)   1.208 us    |              }
+ 2)   0.033 us    |      finish_task_switch();
+ 2) ! 114.732 us  |    } /* schedule */
+ 2) ! 115.042 us  |  } /* schedule_preempt_disabled */
+\end{verbatim}
+This is small piece of a trace of every function call on my system, without function or process filters. Function duration is located at every leaf function and function exit point (\verb|}|): as you can see \verb|schedule()| takes longer to execute than the other functions; there is also a \verb|!| because it's more that 100 microseconds. As we said earlier, the buffer can be filled and some entries will be lost: this is very common if you trace everything without filtering, which is what we did here. 
+
+The ftrace documentation says ``The function name is always displayed after the closing bracket for a function if the start of that function is not in the trace buffer''. In our case, this means that the exit point ``\verb|} /* schedule */|'' is not referring to the initial \verb|schedule()| entry point! Even though we can see the overhead of the function, the actual entry point is not there because it couldn't get written in the trace. To mitigate this we can trace on a single CPU, instead of all 4. This approach has three advantages: 
+\begin{itemize}
+    \item The output won't have function calls interleaved between the CPUs, which breaks the flow of function calls
+    \item Since fewer entries are traced, the buffer won't be filled and many won't be lost
+    \item There is a performance gain: tracing every single function call generates significant overhead
+\end{itemize}
+In general, it's better to narrow the filters as much as possible. For example, it would be good to trace only the function that we're interested in, and on one CPU only: in the next section, we will always trace this way in order to reduce noise.
+
+Let's try to trace only the \verb|schedule()| function, on all CPUS, just to see how much time it can take (on my machine, that is). We do this by executing: 
+\begin{codebash}
+cd /sys/kernel/debug/tracing/
+echo schedule > set_graph_function
+cat trace | grep -F "/* schedule */"
+\end{codebash}
+The output is:
+\begin{verbatim}
++ means that the function exceeded 10 usecs.
+! means that the function exceeded 100 usecs.
+# means that the function exceeded 1000 usecs.
+* means that the function exceeded 10 msecs.
+@ means that the function exceeded 100 msecs.
+$ means that the function exceeded 1 sec.
+
+ 2) + 58.121 us   |  } /* schedule */
+ 1) + 68.348 us   |  } /* schedule */
+ 2) @ 991933.0 us |      } /* schedule */
+ 1) @ 992178.9 us |      } /* schedule */
+ 1) * 31760.76 us |      } /* schedule */
+ 3) ! 139.005 us  |  } /* schedule */
+ 3) $ 1147687 us  |      } /* schedule */
+ 2) + 49.196 us   |  } /* schedule */
+ 3) # 1243.739 us |  } /* schedule */
+ 2) * 97870.13 us |  } /* schedule */
+ 0) + 39.666 us   |  } /* schedule */
+ 3) + 63.518 us   |  } /* schedule */
+ 0) # 1193.975 us |  } /* schedule */
+ 0) ! 345.386 us  |  } /* schedule */
+ 3) + 74.291 us   |  } /* schedule */
+ 0) # 1381.706 us |  } /* schedule */
+ 0) ! 113.232 us  |  } /* schedule */
+ 0) ! 106.633 us  |  } /* schedule */
+ 2) # 1652.529 us |  } /* schedule */
+ 1) $ 1023917 us  |      } /* schedule */
+ 3) @ 935896.8 us |      } /* schedule */
+ 2) $ 1123576 us  |      } /* schedule */
+ 1) * 67530.47 us |      } /* schedule */
+ 0) + 88.367 us   |  } /* schedule */
+ 1) # 1585.574 us |  } /* schedule */
+ 2) @ 231657.1 us |      } /* schedule */
+ 2) ! 389.683 us  |  } /* schedule */
+ 0) + 70.527 us   |  } /* schedule */
+ 1) # 1461.529 us |  } /* schedule */
+ 3) ! 120.510 us  |  } /* schedule */
+ 0) + 90.422 us   |  } /* schedule */
+ 2) # 1433.207 us |  } /* schedule */
+ 2) @ 307235.2 us |      } /* schedule */
+ 3) $ 1063775 us  |  } /* schedule */
+\end{verbatim}
+%Cerca di capire perchè succede e spiegalo 
+The output is not the average time, but rather an unordered mix with a prevalence of the longest times recorded. The reason is that we looked for commented exit points, so these are actually only the exit points that don't have an entry point in the trace (as stated by the documentation). There are some cases where it took more than 1 second (``\verb|$|'') to execute: these are extreme cases where usually the schedule got interruped and some other kernel task was done in the meantime, so it didn't actually take a whole second \textbf{just} to schedule. If we look for every exit point---not just the orphaned ones---we can see that on average the \verb|schedule()| routine will take more than 10 or 100 microseconds, which is still more than the other functions.
+
+\subsection{Event tracing}
+%objective of the thesis
+Function tracing is very useful and will come in handy to understand the code, but now we will focus on events. 
+
+This is essentially a list of the events that we're going to document, some of their names are almost self explainatory.
+\begin{figure}[ht]
+\includegraphics[width=\textwidth]{images/shell_sched.png}
+\caption{Every event associated with scheduling}
+\label{img:sched}
+\end{figure}
+
+\begin{figure}[ht]
+\includegraphics[width=\textwidth]{images/shell_sched_event.png} 
+\caption{Information about the sched\_switch event}
+\label{img:sched_event}
+\end{figure}
+\section{Creating new events}
+
+\begin{figure}[ht]
+\includegraphics[width=\textwidth]{images/shell_trace_systems.png} 
+\caption{All of the systems in which events are subdivided}
+\label{img:systems}
+\end{figure}
+
+Let's trace some scheduling events.
+
+% Program Instrumentation Options
+%       GCC supports a number of command-line options that control adding run-time instrumentation to the code it normally generates.  For example, one purpose of
+%       instrumentation is collect profiling statistics for use in finding program hot spots, code coverage analysis, or profile-guided optimizations.  Another class of
+%       program instrumentation is adding run-time checking to detect programming errors like invalid pointer dereferences or out-of-bounds array accesses, as well as
+%       deliberately hostile attacks such as stack smashing or C++ vtable hijacking.  There is also a general hook which can be used to implement other forms of tracing
+%       or function-level instrumentation for debug or program analysis purposes.
+
+%       -p  Generate extra code to write profile information suitable for the analysis program prof.  You must use this option when compiling the source files you want
+%           data about, and you must also use it when linking.
+
+%       -pg Generate extra code to write profile information suitable for the analysis program gprof.  You must use this option when compiling the source files you want
+%           data about, and you must also use it when linking.
+
+
+\chapter{Implementation}
+\label{chap:implementation}
+
+%to reorder, just moved here
 \paragraph{Red-Black Tree}
 %do we need an introduction on how red-black trees works?
 The runnable tasks are stored inside a red-black tree, this allows us to perform efficienty many of the function that we need.
@@ -538,7 +889,8 @@ A Red-black Tree is a type of self-balancing binary search tree, this means that
 %how is it used in cfs
 As we said before, the task to run next, is the one with the smallest vruntime, in a red-black tree this is the task corresponding to the leftmost node of tree. (In reality we don't traverse the tree, we cache the leftmost node in order to retrieve it faster).
 
-\section{Time Management}%Introduction on time management
+\section{Time Keeping}%Introduction on time management
+\label{timekeeping}
 Many functions of the kernel need to keep track of the passing of the time. The scheduler, for example, needs to know for how long a task has been running in order to know when to preempt it and give the control of the CPU to another task. But there are many other functions that are time-driven, so it's important to understand how the system keeps track of the time.
 
 The kernel requires an hardware timer to manage the passing of time. This timer can be implemented in different ways and there can be more timers in a system, but the general idea is the same: the timer sends an interrupt at a fixed frequency known by the kernel, this way it also knows the time between two timer interrupts and can perform periodic actions such as updating the system uptime. The period between two interrupt is called a \textit{tick} and the frequency is called \textit{tick rate}, this value inside the kernel is defined as \textbf{HZ}. If the value of HZ is 100, it means that the frequency is 100HZ and there is a tick every $1/100$ seconds, or 10 milliseconds.
@@ -602,41 +954,27 @@ The second is the most important for the scheduler, it updates various statistic
 \item check\_preempt\_tick
 \end{itemize}
 
-\section{Updating vruntime}
-
-
-
-\chapter{Event tracing with ftrace} %Where do i put this section?
-\label{chap:ftrace}
-
-
-\chapter{Implementation}
-\label{chap:implementation}
-%Scheduling classes table (move this up)
-\begin{tabular}{|c|c|}
-\hline
-\textbf{Scheduling classes} & \textbf{Scheduling policies}\\
-\hline
-stop\_sched\_class &\\
-\hline
-dl\_sched\_class   & SCHED\_DEADLINE\\
-\hline
-rt\_sched\_class   & SCHED\_FIFO \\
-                   		   & SCHED\_RR\\
-\hline
-fair\_sched\_class & SCHED\_NORMAL\\
-                   & SCHED\_BATCH\\
-                   & SCHED\_IDLE\\
-\hline
-idle\_sched\_class &\\          
-\hline
-\end{tabular}
-
-
 \section{Structs and their role}
 \paragraph{The process descriptor}
 \paragraph{thread\_info}
 \paragraph{mm\_struct}
+
+%show trace starting from the timer interrupt, using function_graph tracer
+Path that \verb|schedule()| takes.
+\begin{codebash}
+#!/bin/bash
+echo function_graph > /sys/kernel/debug/tracing/current_tracer
+# removing noise to see just the actual function trace
+echo 1 > /sys/kernel/debug/tracing/tracing_cpumask #trace on cpu0 only
+echo funcgraph-tail > /sys/kernel/debug/tracing/trace_options #show comments on exit points
+# function to trace
+echo $* > /sys/kernel/debug/tracing/set_graph_function
+# clear previous trace
+echo > /sys/kernel/debug/tracing/trace
+sleep 3
+cat /sys/kernel/debug/tracing/trace
+\end{codebash}
+
 %kernel threads have mm at null
 % task\_strt
 %Need to explain mm_struct and some memory management
@@ -645,6 +983,7 @@ idle\_sched\_class &\\
 \section{Core} 
 \label{sec:core}
 Explain address spaces, kernel threads and user threads, maybe mm\_struct
+%show trace to see order of function call
 %arch/x86/entry/entry_64.S explain kernel preemption e user preemption
 \section{Scheduler routines} 
 %If there are events in the fuction, explain them (events directly related to scheduling)
@@ -862,8 +1201,17 @@ Marco Cesati and Daniel P. Bovet.
 \textit{Understanding the Linux Kernel, Third Edition}.
 O'reilly, 2005.
 
-\bibitem{pid_h}
-Comments in \verb|include/linux/kernel.h|
+\bibitem{secrets}
+Steven Rostedt.
+\textit{Secrets of the Ftrace function tracer}.
+lwn.net, 2010.
+\texttt{https://lwn.net/Articles/370423/}
+
+\bibitem{trace_event}
+Steven Rostedt.
+\textit{Using the TRACE\_EVENT() macro}.
+lwn.net, 2010.
+\texttt{https://lwn.net/Articles/379903/}
 \end{thebibliography}
 \end{document}
 
@@ -900,6 +1248,7 @@ else
 \end{code}
 This is how the scheduling period is calculated.\\ 
 \verb|sched_nr_latency| is simply $\cfrac{latency}{granularity_{min}}$.
+
 \begin{code}
 #define likely(x)       __builtin_expect(!!(x), 1)
 #define unlikely(x)     __builtin_expect(!!(x), 0)
