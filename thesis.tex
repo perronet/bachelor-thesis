@@ -638,26 +638,40 @@ The name comes from ``function tracer'', which is one of its features, but it ha
 
 As anticipated, one of the objectives of the thesis is to document events related with scheduling. To understand what they do and why they are useful, it's necessary to understand ftrace, which is the tool that uses them.
 \section{How does it work?}
-% In addition to the function tracer, there is the sched\_switch tracer that tracks and reports on context switches in the kernel, showing process wakeups along with when they get scheduled.
 
-Tracing means ...
-
-While tracing, the events that need to be monitored are so frequent that an extremely lightweight mechanism is needed. Ftrace offers this possibility because it's self-contained and entirely implemented in the kernel, requiring no user space tools whatsoever.
-
-There are two main ways of using ftrace (and similar kernel debuggers):
+Tracing means recording events that occur at runtime in order to analyze the code's behavior and performance. More generally, this is called \textit{software profiling} ans it's implemented with different techniques. In our case, it's achieved by the means of \textit{code instrumentation}, which consists in adding instructions to the source code or its binary in order to profile it. There are two main ways of using ftrace, and they use two different instrumentation techniques:
 \begin{itemize}
-    \item Function tracing, using software profiling
-    \item Event tracing, using tracepoints in the code
+    \item Function tracing, using \verb|gcc|'s code instrumentation mechanism activated by compiling with the \verb|-pg| option.
+    \item Event tracing, using \textit{tracepoints} in the source code.
 \end{itemize}
-% explain code profiling
-%Code injeciton: First generates overhead, the second does not, gcc -pg
+Function tracing uses a form of dynamic profiling: this means that the tracing instructions can be toggled at runtime in the binary executable, without the need to recompile the code. The way this works is that, while compiling, \verb|gcc| adds extra \verb|NOP| assembly instructions at the beginning of every function. The position of these instructions is then saved in the binary itself, so that it will be possible to change these \verb|NOP|s into something else. This is exactly what ftrace does: it toggles tracing by changing these instructions at runtime; they are converted to \verb|JMP| instructions to tracing functions, and then back to \verb|NOP| to disable tracing. For this reason, this instrumentation technique is called \textit{runtime injection}. This approach has two main advantages: 
+\begin{itemize}
+    \item Since we can toggle tracing at runtime, there is zero overhead when it's disabled (so 99\% of the time).
+    \item It's possible to filter what is being traced: we could dynamically activate tracing only on functions from a single subsystem, or on one function alone.
+\end{itemize}
 
+Event tracing, on the other hand, is a little different and it's less efficient than function tracing because it doesn't use runtime injection. Instead, it uses tracepoints directly in the c code, which makes it static. Tracepoints are simply direct calls to tracing function, which will gather some information through parameters and then write it in the trace output, along with the event name. Since this mechanism is static, the whole kernel must be recompiled to toggle the tracepoints: this is done by simply toggling the \verb|CONFIG_TRACEPOINTS| macro in the configuration before compiling. Let's take two scheduling events as an example: \verb|sched_stat_runtime| and \verb|sched_migrate_task|. The first happens in a specific point of the scheduler code and contains core scheduling information about a given process; the second happens upon migration of a task and contains information such as the CPU the thread was migrated to. They are called in the code like this:
+\begin{code}
+// curtask and curr are task_structs, delta_exec is the difference in runtime since the last timer interrupt. 
+trace_sched_stat_runtime(curtask, delta_exec, curr->vruntime);
+// p is a task_struct, new_cpu is the CPU the thread migrated to
+trace_sched_migrate_task(p, new_cpu);
+\end{code}
+When these events happen, they will appear in the trace output like this:
 \begin{verbatim}
+# The format is name, pid, cpu, timestamp, event name, event information 
 AudioIPC-1849  [002] 21448.743195: sched_stat_runtime:   comm=AudioIPC Callba pid=1849 runtime=104248 [ns] vruntime=3462508278368 [ns]
 AudioIPC-1849  [002] 21448.743174: sched_migrate_task:   comm=AudioIPC Client pid=26778 prio=120 orig_cpu=3 dest_cpu=0
-\end{verbatim}
+\end{verbatim} %TODO rivedi i parametri di sched migrate task
+Notice how all the information can be found through the parameters: command, pid, runtime and priority can all be found directly into the \verb|task_struct|.
+
+So what do the tracing functions do, exactly? Ftrace uses a ring buffer to store all the events that are happening at runtime, so these functions will write new events in the buffer. Essentially, the producer is the kernel and the consumer is the user, which will read from userspace (we will shortly see how). Because it's a circular buffer, all the old entries are overwritten if they are not read in time: this happens all the time with events because, since boot, they are written in the buffer even if nobody is reading. Another scenario in which entries are lost is when they are getting written faster than they are read: this is common when we trace every single function/event without any filters. It's generally good practice to filter as much as possible to avoid losing entries, which is possible with dynamic tracing, but not with static tracing. It's true that we can easily filter the trace output, but with static tracing the entries will be written in the buffer anyway, resulting in potential overwriting: this is why with function tracing we have true filtering, but not with event tracing.
 
 \section{Interfacing with ftrace}
+While tracing, the events that need to be monitored are so frequent that an extremely lightweight mechanism is needed. Ftrace offers this possibility because it's self-contained and entirely implemented in the kernel, requiring no user space tools whatsoever.
+
+We said earlier that the producer is the kernel, and the consumer is the user.
+
 % The entire runtime interaction with ftrace is performed through readable and writable virtual files contained in a specifically mounted debugfs file system; as a result, ftrace requires no specialized userspace utilities to operate
 
 \begin{codebash}
@@ -835,7 +849,9 @@ $ means that the function exceeded 1 sec.
  3) $ 1063775 us  |  } /* schedule */
 \end{verbatim}
 %Cerca di capire perchè succede e spiegalo 
-The output is not the average time, but rather an unordered mix with a prevalence of the longest times recorded. The reason is that we looked for commented exit points, so these are actually only the exit points that don't have an entry point in the trace (as stated by the documentation). There are some cases where it took more than 1 second (``\verb|$|'') to execute: these are extreme cases where usually the schedule got interruped and some other kernel task was done in the meantime, so it didn't actually take a whole second \textbf{just} to schedule. If we look for every exit point---not just the orphaned ones---we can see that on average the \verb|schedule()| routine will take more than 10 or 100 microseconds, which is still more than the other functions.
+The output is not the average time, but rather an unordered mix with a prevalence of the longest times recorded. The reason is that we looked for commented exit points, so these are actually only the exit points that don't have an entry point in the trace (as stated by the documentation). There are some cases where it took more than 1 second (``\verb|$|'') to execute: these are extreme cases where the schedule got interruped and some other kernel task was done in the meantime, so it didn't actually take a whole second \textbf{just} to schedule. If we look for every exit point---not just the orphaned ones---we can see that on average the \verb|schedule()| routine will take less time, but still more than the other functions.
+
+There is also another problem with this trace. Steven Rostedt, the creator of ftrace, said in one of its articles that ``Only the leaf functions, the ones that do not call other functions, have an accurate duration, since the duration of parent functions also includes the overhead of the \verb|function_graph| tracer calling the child functions''.\cite{secrets} This means that taking the difference between the timestamp of the entry and exit point is not enough, since the overhead of ftrace is not taken into account. The same article says ``By using the \verb|set_ftrace_filter| file, you can force any function into becoming a leaf function in the \verb|function_graph| tracer, and this will allow you to see an accurate duration of that function''. If we do that we find out, more accurately, that most of the time it will take between $20 \mu s$ and $400\mu s$ to execute \verb|schedule()|.
 
 \subsection{Event tracing}
 %objective of the thesis
@@ -855,6 +871,8 @@ This is essentially a list of the events that we're going to document, some of t
 \end{figure}
 \section{Creating new events}
 
+At this level, events are seen as structures, and they are printed ... .
+
 \begin{figure}[ht]
 \includegraphics[width=\textwidth]{images/shell_trace_systems.png} 
 \caption{All of the systems in which events are subdivided}
@@ -863,19 +881,7 @@ This is essentially a list of the events that we're going to document, some of t
 
 Let's trace some scheduling events.
 
-% Program Instrumentation Options
-%       GCC supports a number of command-line options that control adding run-time instrumentation to the code it normally generates.  For example, one purpose of
-%       instrumentation is collect profiling statistics for use in finding program hot spots, code coverage analysis, or profile-guided optimizations.  Another class of
-%       program instrumentation is adding run-time checking to detect programming errors like invalid pointer dereferences or out-of-bounds array accesses, as well as
-%       deliberately hostile attacks such as stack smashing or C++ vtable hijacking.  There is also a general hook which can be used to implement other forms of tracing
-%       or function-level instrumentation for debug or program analysis purposes.
-
-%       -p  Generate extra code to write profile information suitable for the analysis program prof.  You must use this option when compiling the source files you want
-%           data about, and you must also use it when linking.
-
-%       -pg Generate extra code to write profile information suitable for the analysis program gprof.  You must use this option when compiling the source files you want
-%           data about, and you must also use it when linking.
-
+Let's create our own kernel module, which will do something and then throw an event.
 
 \chapter{Implementation}
 \label{chap:implementation}
@@ -995,7 +1001,18 @@ Explain address spaces, kernel threads and user threads, maybe mm\_struct
 
 \section{Other events} %Not directly related to scheduling
 \label{sec:other_events}
-Tracepoints, file and line
+A simple script can give us the tracepoint location of every event that we are looking for.
+\begin{codebash}
+#!/bin/bash
+# find_sched_events.sh TODO FIXME
+events=$(ls /sys/kernel/debug/tracing/events/sched | grep "sched_" | sort)
+cd /path/to/linux-4.20.13
+for i in $events
+do
+	grep -rin "$i" >> ../events_output
+done
+\end{codebash}
+This gives us the following output:
 \begin{verbatim}
 fs/exec.c:1698:		trace_sched_process_exec(current, old_pid, bprm);
 
@@ -1029,16 +1046,20 @@ kernel/sched/core.c:5485:	trace_sched_move_numa(p, curr_cpu, target_cpu);
 
 kernel/sched/fair.c:1836:			trace_sched_stick_numa(p, env.src_cpu, env.best_cpu);
 kernel/sched/fair.c:1844:		trace_sched_stick_numa(p, env.src_cpu, task_cpu(env.best_task));
-kernel/sched/fair.c:3817:	if (trace_sched_stat_wait_enabled()    ||
-kernel/sched/fair.c:3818:			trace_sched_stat_sleep_enabled()   ||
-kernel/sched/fair.c:3819:			trace_sched_stat_iowait_enabled()  ||
-kernel/sched/fair.c:3820:			trace_sched_stat_blocked_enabled() ||
-kernel/sched/fair.c:3821:			trace_sched_stat_runtime_enabled())  {
 kernel/sched/fair.c:833:		trace_sched_stat_runtime(curtask, delta_exec, curr->vruntime);
 kernel/sched/fair.c:886:		trace_sched_stat_wait(p, delta);
 kernel/sched/fair.c:925:			trace_sched_stat_sleep(tsk, delta);
 kernel/sched/fair.c:944:				trace_sched_stat_iowait(tsk, delta);
 kernel/sched/fair.c:947:			trace_sched_stat_blocked(tsk, delta);
+
+ifs:
+
+kernel/sched/fair.c:3817:	if (trace_sched_stat_wait_enabled()    ||
+kernel/sched/fair.c:3818:			trace_sched_stat_sleep_enabled()   ||
+kernel/sched/fair.c:3819:			trace_sched_stat_iowait_enabled()  ||
+kernel/sched/fair.c:3820:			trace_sched_stat_blocked_enabled() ||
+kernel/sched/fair.c:3821:			trace_sched_stat_runtime_enabled())  {
+
 \end{verbatim}
 Events details + comments found in the code
 \begin{verbatim}
