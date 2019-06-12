@@ -1,0 +1,245 @@
+\chapter{Group scheduling and cgroup} %Capitolo Stefano Chiavazza
+
+\section{Introduction}
+
+%What is a group, why it could be useful to group tasks and some examples
+The Completely Fair Scheduler tries to divide the CPU equally between all the threads. It doesn't matter to which process or user that threads belongs to. This means that it is fair only from a task perspective. If there are more users on a system and the system administrator wants to divide the CPU equally between them, he can't do that with the basic version of CFS. The CPU assigned to each user would depend on the number and type of processes that they have.
+
+In a system with 50 tasks, suppose that 49 belongs to user A and only 1 to user B. CFS assign to each 1/50 of the CPU. This translates to a 98\% of CPU for user A and only 2\% for user B. From the user perspective this is not fair.
+
+In a scheduler that is also fair to the users, the 49 tasks of user A should get each roughly 1\% of CPU time and the one task of user B should get 50\%. This way both users would get 50\% of the CPU. 
+
+This concept can be expanded to any kind of group. The tasks can be grouped in many different ways, but the same concept of fair group scheduling can be applied. There could also be the possibility of having a group inside another group. This would create an hierarchy where each group at the same level would get the same share of CPU.
+
+Imagine a university server that is used by students, but also for large computations. Many students can use the server at the same time and each can run many programs. With the hierarchical structure the system can be divided in 2 groups, one for all the students and one for the computations. The group for the students can be further divided in other groups, one for each student. This way the computation would always get 50\% of CPU time while the remaining would be equally divided between all students.
+
+\paragraph{CPU Bandwidth}
+The group scheduling feature above doesn't guarantee that a group runs for limited amount of time, it only divides the CPU equally between active groups. If none of the task of one group are ready to run, the other groups will get the share of CPU. The ability to control the the maximum amount of CPU that a group can get can be useful especially in some enterprise scenarios. 
+
+Cloud systems, for example, offer limited CPU capacity. It is in the interests of the company to limit the resources of a group.
+
+\section{Scheduling}
+
+Linux allows group scheduling with CFS since verision 2.6.24, this feature is active only if the kernel was configured with the \verb|CONFIG_FAIR_GROUP_SCHED|.
+\subsection{Entity Hierarchy}
+
+The concept of a schedulable entity was introduced in order to implement the group scheduling feature. This entity contains the information required to schedule a task, like the weight, but an entity doesn't have to be a task. A group is also considered an entity an can be scheduled exactly like a task.
+
+These entities are not placed all on the run queue, instead they organized in an hierarchy. If a task belongs to a group, then the task is placed under the group in the hierarchy. It is also possible that a group is placed under another, forming, this way, groups inside other groups.
+
+Each group entity has its own run queue where all its child entities are placed. The top level entities, which are not contained in any other group, are placed on the main CPU run queue. Each run queue is represented via a red-black tree.
+
+When the scheduler has to pick the next task to run, it first chooses the most deserving entity from the top-level queue using the  normal CFS algorithm. If it represents a task, it is executed normally. If it represents a group, the process is repeated and an entity is chosen from the group run queue. The process continues until a task is selected. 
+
+The scheduler bases its decision on the weight of an entity, and it treats task and groups equally. The weight is based on the nice value, when a group is created its default nice is 0, but this value can be changed. In section 1.3 we explore how groups are created.
+
+\subsection{CPU Limits}%https://landley.net/kdocs/ols/2010/ols2010-pages-245-254.pdf
+%and https://www.kernel.org/doc/Documentation/scheduler/sched-bwc.txt
+
+As we mentioned in the introduction, it could be useful to limit the total amount of CPU that a group can use, as the normal group scheduling does not impose any hard limit on the CPU bandwidth for a single group. 
+
+Linux has a feature to impose limits a maximum CPU bandwidth to a group. It is an extension of \verb|CONFIG_FAIR_GROUP_SCHED| and the needs to be configured with \verb|CONFIG_CFS_BANDWIDTH|.
+
+The CPU limit of a group is controlled by two parameters:  \verb|cfs_period_us| and \verb|cfs_quota_us|, expressed in microseconds. The first defines the a period and the second defines the amount of time that the group can run during that period. Those two parameters a can be set via cgroup. See section 1.4.
+
+The basic working is simple. At every tick of the system timer the quota of the group is reduced, when it reaches zero, the group is throttled. In this case the task is dequeued and it is prevent from queuing again with other mechanisms. At the end of each period the quota is repristinated and the group is queued again.
+
+A group can also be throttled when its parent's quota is fully consumed. Even if the child has time remaining it will not be allowed to run.
+
+\paragraph{Multiprocessor}
+In case the system uses more processors the process is more complicated. The different processors need to communicate in order to guarantee that the group does not exceed his quota. For this reason the quota left for the group is tracked globally. In order to limit the accesses to this global quota, the runtime of a group is not consumed directly.
+
+Instead, a portion of the quota available is stored in the entity's runqueue of the group. Each CPU has its own local quota for each group.
+
+At each scheduler tick, the remaining quota of the current group is updated. If the local quota has expired, the system tries to get more quota from the global tracker. If there is still more quota available, it is transferred to the CPU and group can be scheduled again. If the group has ran out global quota, the group is throttled. The amount of time that is taken at each request can be configured by the user. It can be changed via the proc filesystem:\verb|/proc/sys/kernel/sched_cfs_bandwidth_slice_us|.
+
+There is no mechanism to transfer local quota from one CPU to another. This means that a task could be considered throttled by one CPU, and not by another. A smaller timeslice transferred from the global quota allows for a more fine-grained consumption, but will also increase the transfer overhead. %check
+
+\subsection{Implementation of group scheduling and CPU bandwidth control}
+
+Each task group on the system has a \verb|task_group| struct associated with it. It contains a few important fields, the most important are:
+\begin{code}
+struct task_group {
+	#ifdef CONFIG_FAIR_GROUP_SCHED
+	/* schedulable entities of this group on each CPU */
+	struct sched_entity	**se;
+	/* runqueue "owned" by this group on each CPU */
+	struct cfs_rq		**cfs_rq;
+	unsigned long		shares;
+	#endif
+	.
+	.
+	.
+	struct cfs_bandwidth	cfs_bandwidth;
+};
+\end{code}
+
+\begin{itemize}
+    \item the \verb|sched_entity **se| is a point to a list of entities, one for each CPU. Each entity is the root of the hierarchy of the group. 
+    \item the \verb|cfs_rq **cfs_rq| are the runqueues on which the entities belonging to this group are scheduled. The is one runqueue for each CPU.
+    \item \verb|shares| represents the percentage of CPU that the group should use. %fix!!!
+    \item \verb|struct cfs_bandwidth| stores the information used for CPU bandwidth control. The most important fields are: \verb|quota| and \verb|period|. It also stores some statistics such as: \verb|throttled_time| and \verb|nr_throttled|.
+\end{itemize}
+
+\subsubsection{Scheduling}
+
+As we mentioned both tasks and groups have a corresponding scheduling entity. Many fields are important for the scheduler, here are only the ones related to group scheduling:
+
+\begin{code}
+struct sched_entity {
+...
+#ifdef CONFIG_FAIR_GROUP_SCHED
+	int				depth;
+	struct sched_entity		*parent;
+	/* rq on which this entity is (to be) queued: */
+	struct cfs_rq			*cfs_rq;
+	/* rq "owned" by this entity/group: */
+	struct cfs_rq			*my_q;
+#endif
+};
+\end{code}
+The fields related to group scheduling are:
+\begin{itemize}
+    \item \verb|depth|: represents the depth inside the hierarchy
+    \item \verb|sched_entity *parent|: it's a pointer to the parent entity in the hierarchy. If the entity is not part of any other group, this pointer is not set.
+    \item \verb|cfs_rq *cfs_rq|: it's a  pointer to the run queue of the parent entity, or to the top-level run queue, if the entity is not part of a group.
+    \item \verb|cfs_rq *my_q|: if this entity represents a group, this is the run queue on which the entities belonging to this group will run. If this entity has no children or it's a task this run queue will be empty.
+\end{itemize}
+
+\paragraph{Updating virtual run time}
+With group scheduling, every time that the virtual run time of an entity is updated, the virtual run time of the parent entities needs to be updated too. At every system interrupt the system has to traverse the hierarchy and update the run time statistics of all the entities. Notice that the virtual run time added to the entities will be different and depends on the weight of each.
+
+\paragraph{Choosing the next task}
+When the scheduler has to pick the next task to run, it starts by selecting the most deserving entity from the top-level \verb|cfs_rq|. If this entity has the \verb|my_q| set to null, it means that it is a task, and the process is finished. Otherwise, it \verb|my_q| is set, the process is repeated again on this run queue.
+
+\subsubsection{CPU Bandwidth}
+Each group has a \verb|cfs_bandwidth| struct associated with it. This struct holds the global quota available to a group and it is unique between all the CPUs. As we mentioned in the previous section, this quota is not consumed directly at each scheduler tick. Instead is reduced in batches when needed.
+
+A group entity has its own \verb|cfs_rq| on which its tasks are scheduled, but different CPUs have different runqueues associated with the same group. Each runqueue has its own available quota, which is decreased at each scheduler tick. The \verb|cfs_rq| struct has a few fields related to bandwidth control:
+\begin{itemize}
+    \item \verb|int runtime_enabled|: simply indicates if the current runqueue has bandwidth restrictions.
+    \item \verb|expires_seq|: period counter.
+    \item \verb|runtime_expires|: indicates the end of the current period.
+    \item \verb|runtime_remaining|: indicates the remaining quota already assigned to this CPU in the current period.
+    \item \verb|throttled|: is set to 1 if the runqueue is throttled.
+\end{itemize}
+
+The local quota accounting is done by the \verb|__account_cfs_rq_runtime()| function, which is called by \verb|update_curr()|:
+\begin{code}
+static void __account_cfs_rq_runtime(struct cfs_rq *cfs_rq, u64 delta_exec)
+{
+	cfs_rq->runtime_remaining -= delta_exec;
+	expire_cfs_rq_runtime(cfs_rq);
+	if (likely(cfs_rq->runtime_remaining > 0))
+		return;
+	/*
+	 * if we're unable to extend our runtime we resched so that the active
+	 * hierarchy can be throttled
+	 */
+	if (!assign_cfs_rq_runtime(cfs_rq) && likely(cfs_rq->curr))
+		resched_curr(rq_of(cfs_rq));
+}
+\end{code}
+
+The first two lines simply reduce the \verb|runtime_remaining| and check if the period has expired, if it has, \verb|remaining_time| is set to 0.
+
+In case the group has exceeded his local bandwidth limit or the period has expired, it tries to get more time from the global pool. This is done by the \verb|assign_cfs_rq_runtime()| function. If it can get more time, the local quota is updated, otherwise a reschedule is triggered and later the group throttled.
+
+The global quota is managed by 
+\begin{verbatim}
+task_group->cfs_bandwidth.
+\end{verbatim}
+Note that the access to this struct is protected by a lock, since more CPUs could try to access it at the same time.
+
+These are the main fields in \verb|cfs_bandwidth|:
+\begin{code}
+struct cfs_bandwidth {
+	ktime_t			period;
+	u64			quota;
+	u64			runtime;
+	u64			runtime_expires;
+	int			expires_seq;
+    
+    short			idle;
+	short			period_active;
+	struct hrtimer		period_timer;
+	
+	struct list_head	throttled_cfs_rq;
+
+	/* Statistics: */
+	int			nr_periods;
+	int			nr_throttled;
+	u64			throttled_time;
+};
+\end{code}
+The default amount of time transferred from the global to the local pool is 5 milliseconds, but it can be changed.
+
+We mentioned is section 1.2.2 that the CPU bandwidth for a group is controlled by two parameters, a quota and a period. These values are present in the \verb|cfs_bandwidth| struct. At the start of each period \verb|runtime| is set to \verb|quota| and \verb|runtime_expires| is set to the current time plus the period.
+
+When a local runqueue requests for more time, the \verb|assign_cfs_rq_runtime()| function checks if the global pool still has some time left:
+\begin{itemize}
+    \item if there is time left and it is more than the transfer slice, then the time is decreased from the global pool and added to the local quota.
+    \item if there is still time left, but it less than the slice, only the remaining time is transferred
+    \item if there is no time left, nothing is transferred and, if the group is currently running, a reschedule is triggered.
+\end{itemize}
+If the global pool is decremented \verb|cfs_bandwidth->idle| is set to 0, this siganl that the has been activity during the period.
+
+Note that a group could have CPU bandwidth restriction activated, but have unlimited time if the quota is greater or equal to the period. In this case the timeslice is always transferred to the local queue.
+
+\paragraph{Throttling}%https://lore.kernel.org/patchwork/patch/259880/
+As mentioned before, when a group exceeds its quota, a rescheduling action is triggered, but it is not throttled directly. When an entity is removed from the runqueue, the \verb|put_prev_entity()| function is called. This function updates some statistics and if \verb|cfs_rq->runtime_remaining| is less than or equal to zero, the task is throttled by the \verb|throttle_cfs_rq()| function, which does the following actions:
+\begin{itemize}
+    \item removes the entity corresponding to the throttled runqueue from the its parent \verb|cfs_rq|.
+    \item if the parent \verb|cfs_rq| only contained that entity, it is also dequeued, this process continues until a runqueue with more entities is reached.
+    \item \verb|cfs_rq->throttled| is set to 1.
+    \item the \verb|cfs_rq| is added to the list of throttled groups contained in the \verb|cfs_bandwidth| struct of the task group.
+\end{itemize}
+Note that the the group are throttled independently on each CPU.
+
+When a thread is woken up, a throttled entity could be added again to the runqueue. In order to avoid this, the \verb|enqueue_entity()| function checks if the added entity has exceeded its bandwidth.
+
+\paragraph{Refreshing runtime}
+A timer is set to trigger at the end of every period, the default value for a period is 0.1 seconds, but it can be changed. At every trigger the \verb|sched_cfs_period_timer()| function is called which in turn calls the \verb|do_sched_cfs_period_timer()| function. This function is responsible for refilling a \verb|task_group|'s quota and unthrottling its runqueues:
+\begin{itemize}
+    \item first of all, \verb|cfs_bandwidth->nr_periods| is updated with the number of periods passed since the last execution of the timer handler. Notice that, the handler's execution could be delayed compared to the timer trigger. This means that more than one period could have passed.
+    \item then, if during the last period there has been no activity (\verb|idle|=1) and there aren't any throttled runquques, the timer is deactivated until scheduling resumes. %from code's comment
+    \item the \verb|cfs_bandwidth->runtime| is set to \verb|quota|, the \verb|runtime_expires| field is set to the current time plus the period and \verb|expires_seq| is increased by one.
+    \item lastly, if there are any throttled runqueues, it tries to assign them more time and unthrottle them. It is possible that the updated global runtime is not sufficient to unthrottle all the runqueues.
+\end{itemize}
+
+\section{Autogroup}%http://man7.org/linux/man-pages/man7/sched.7.html
+%https://lwn.net/Articles/418884/
+%https://lwn.net/Articles/415740/
+Group scheduling is a nice feature, but at first it required a manual setup and root privileges and many desktop users weren't using it. Autogroup is a feature that allows groups to be created automatically based on the session ID and also improves interactive performance on desktop, especially during CPU-intensive workloads.
+
+\subsubsection{Session}
+Session are used to identify distinct process groups, each session has an ID. This ID corresponds to the PID of the process that initiates the session. It can be initiated via the \verb|setsid()| an it is usually done when a new terminal is started. If a process, that belongs to a group, generates a new process via \verb|fork()| the new process will inherit the session ID.
+
+When the autogroup feature is enabled in the kernel with \verb|CONFIG_SCHED_AUTOGROUP|, all the tasks with the same session ID are placed inside the same task group. We saw in section 1.2 how the scheduler tries give each group an equal amount of CPU time.
+
+This is particularly useful during CPU-intensive workloads that use many parallel processes. Suppose that there are 10 CPU-intensive parallel processes and 1 process, like a video player, that also needs a lot of CPU. Without autogrouping the CPU would be equally distributed between all the processes and  the video player would only get a small portion of CPU time, which could degrade the viewing experience. With autogrouping enabled, there would be one task group containing the 10 processes and one containing only the video player. This way the player can get 50\% of CPU time.
+
+%to continue:
+%how to interact with autogroup
+%alternatives to session ID maybe(tty, see links)
+%what happens when a group is created
+
+
+\section{Control groups}
+%https://www.kernel.org/doc/Documentation/cgroup-v1/cgroups.txt
+
+Control groups (cgroup) are a kernel mechanism that allows the creation and the control of groups. By itself, a cgroup, offers only the possibility to group processes and associates a set or parameters with it, but alone it doesn't have effect on the scheduling or on other stuff.
+
+A subsystem, or resource controller, can use the functionalities provided by cgroup to control how a group uses its resources. The cpu subsystem, for example, enables the control of the CPU resources with the mechanisms described in the previous section. There are also other subsystems,like the memory subsystem that allows the control of memory resources or devices subsys that controls the access to devices.
+
+Cgroups are organized in hierarchies, in which child groups inherit some attributes of the parent. Different subsystems may need to organize the hierarchy in different ways, for this reason more than one hierarchy is possible. Every group must be present in all the hierarchies.
+
+\subsection{How to control cgroup}
+Control groups don't have any dedicated system calls, instead the user can interact with them via a dedicated filesystem.
+
+\subsection{Implementation}
+
+\subsubsection{css}
+
+\subsubsection{The cpu subsystem}
+
