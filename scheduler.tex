@@ -1,11 +1,10 @@
 \chapter{The Linux scheduler} %Capitolo in comune
 \label{ch:sched}
 
-As illustrated earlier, the CPU can only execute one task at a time and, even on multiprocessors systems, the number of tasks will be larger than the number of cores. For this reason, the scheduler is in charge of alternating the execution of tasks. % This is the job of the scheduler, which decides which task to run and for how long.
-In order to decide which task to run and for how long, the scheduler has to consider many factors, such as
-the importance of the task and its type.
+As illustrated earlier, the CPU can only execute one task at a time and, even on multiprocessors systems, the number of tasks will be larger than the number of cores. For this reason, the scheduler is in charge of alternating the execution of tasks. 
+In order to decide which task to run and for how long, the scheduler has to consider many factors, such as the importance of the task and its type.
 
-\section{Introduction}%maybe to change
+\section{Introduction}%maybe change name
 
 \subsection{Objectives of the scheduler}
 
@@ -26,7 +25,6 @@ This means that the scheduler, not only needs to minimize the response time, but
 %CPU bound vs IO bound
 
 %throughput 
-%MP: qui ho accorciato la spiegazione di context switch perchè l'ho stressato molto nel capitolo prima
 Ideally, the scheduler should do as few process switches as possible. Preempting a task, choosing another one and then context switching is a long operation. Every time the scheduler is performing a context switch, the CPU is not being used by any task. This is why, on the long run, frequent context switches will have an impact on the performance of the system. More specifically, they will decrease the \textit{throughput}, which we define as the total amount of work completed per unit of time. It's important to note that we are talking about work done for the user: switching processes doesn't count as work since it's essentially overhead. Increasing the frequency of context switches would increase the responsiveness of the system, but it would also reduce the performance. The scheduler strives to find a balance between responsiveness and performance.
 
 \paragraph{Fairness and Starvation}
@@ -217,7 +215,7 @@ static const int prio_to_weight[40] = {
 /* 15 */ 36, 29, 23, 18, 15,
 };
 \end{code}
-The expression of Eq.~\eqref{eq:weight_nice} is designed in such a way that an increase of 1 in the nice value roughly translates to a 10\% increase in assigned fraction of CPU (with same load conditions). % TODO what? 
+The expression of Eq.~\eqref{eq:weight_nice} is designed in such a way that an increase of 1 in the nice value roughly translates to a 10\% increase in assigned fraction of CPU.
 For example, if there are only 2 processes with the same nice value, they will get both $50\%$ of CPU time. If the nice of one of the processes is increased by one, then it will get $55\%$ of CPU time while the other will get only $45\%$.
 Figure~\ref{fig:weight_vs_nice} reports the plot of the function of Equation~\eqref{eq:weight_nice}.
 \begin{figure}[htb]
@@ -266,13 +264,13 @@ This function is plotted in Figure~\ref{fig:plot_cpu}.
 \label{fig:plot_cpu}
 \caption{Plot of the fraction of CPU assigned to one process among two, assuming they have a difference $d$ of the nice level.}
 \end{figure}
-Finally, by computing the derivative of Equation~(\ref{eq:cpu_frac_vs_diff}) at $d=0$ we find the value of $0.5\log(5/4)\approx 0.11157$. This is the 10\% increase that was referred by the comments. %TODO say that the array could be changed according to this precise value
+Finally, by computing the derivative of Equation~(\ref{eq:cpu_frac_vs_diff}) at $d=0$ we find the value of $0.5\log(5/4)\approx 0.11157$. This is the 10\% increase that was referred by the comments in line 7. 
 
-%Correggi da questa sezione in sotto
+Since this value is not exactly 10\%, it is possible to correct the original formula according to the precise value. With the new formula, we can compute the \verb|prio_to_weight| table again, and then recompile the kernel with the new table: this way, the ``10\% effect'' would be even more precise.
+
+%correggi da questa sezione 
 \subsection{Assigned time and virtual runtime}
-We have defined a function that assigns a weight to each nice level. Let's see how this weight is used to decide which task to run and for how long.
-
-The amount of time that a task can spend on the CPU is determined by 4 values:
+We have defined a function that assigns a weight to each nice level. Let's see how this weight is used to decide which task to run and for how long. The amount of time that a task can spend on the CPU is determined by 4 values:
 \begin{itemize}
     \item the \textit{Target latency}, which is a tunable value and it's the period of the scheduler. During this period the scheduler tries to schedule every task once. 
     \item the \textit{Minimum granularity}, which is the minimum amount of time that can be assigned to a task, this is done to prevent small timeslices that would result in a higher switching cost. It is also used to control the behavior of the scheduler. A small value is better for desktop systems that require low latencies, while a large value is better for server workloads.
@@ -284,45 +282,36 @@ Given these values, the time assigned to a task is equal to:
     assigned\_time = target\_latency * \frac{task\_weight}{total\_weight}
 \end{equation}
 
-\paragraph{Virtual run time}
+\paragraph{Virtual runtime}
 Remember that CFS tries to model an ideal multi-tasking CPU where each task runs for the same amount of time. In order to know which task deserves to be run next, every task keeps track of the total amount of time that is has spent running. The simplest solution for the scheduler would be to choose the task with the smallest total runtime. But this approach ignores the priorities of the tasks. Instead the absolute runtime of each task is weighted with the weight value discussed before. The weighted time is called the virtual runtime, abbreviated to vruntime. The general formula for calculating it is:
 \begin{equation}
     vruntime = delta\_exec * \frac{weight\_of\_nice\_0}{task\_weight}
 \end{equation}
 Where \verb|delta_exec| is the absolute time that the task spent running and \verb|weight_of_nice_0|, as the name suggests, is the weight corresponding to a task with nice zero.
 
-If the nice value of the task is 0, the fraction has value 1 and the virtual runtime is equivalent to the actual time spent running on the CPU.
-
-If the nice value is less than 0, then the virtual runtime will be smaller than the actual runtime. This means that the virtual runtime of an high priority task will increase more slowly than the vruntime of a low priority one. So, in order to keep all the virtual runtimes at the same level the high priority task will have to run for more time.
-
-On the other hand, if the nice value is more than 0, the virtual runtime will increase faster.
+If the nice value of the task is 0, the fraction has value 1 and the virtual runtime is equivalent to the actual time spent running on the CPU. If the nice value is less than 0, then the virtual runtime will be smaller than the actual runtime. This means that the virtual runtime of an high priority task will increase more slowly than the vruntime of a low priority one. So, in order to keep all the virtual runtimes at the same level the high priority task will have to run for more time. On the other hand, if the nice value is more than 0, the virtual runtime will increase faster.
 
 \paragraph{Running the next task}
 
 As we said before, the goal of CFS is to be as fair as possible with all the task. This means keeping all the task's vruntime as close as possible to each other. Following this logic, the task that deserves more than anyone to be executed next, is the one with the smallest vruntime.
+%fino a qui
 
-%Leggiti nuova roba di stefano a partire da qui
 \subsection{Adding and removing tasks from the runqueue}
-When a task goes to sleep, it is removed from the runqueue so it can not run until it is woken up. While sleeping the virtual runtime of a task remains the same, but the other tasks continue to increase it. If the task is woken up and re-inserted into the run queue with the same virtual runtime it had before, it would have a significantly higher priority compared to the task that remained on the runqueue. This creates a situation of unfairness, where a sleeping task gets too much priority.
+When a task goes to sleep, it is removed from the runqueue. While sleeping, the virtual runtime of a task remains the same, while the other tasks will continue to increase their own vruntime. If the task is woken up and re-inserted into the runqueue with the same virtual runtime it had before, it would have a significantly higher priority compared to the task that remained on the runqueue: this creates a situation of unfairness, where a sleeping task gets too much priority.
+A similar situation happens with a newly created task, since it cannot simply have zero as the initial value. If that were the case, the older tasks would not get any CPU for a long time, and the new task would stay on the CPU until its virtual runtime reaches the one of the older tasks.
 
-Something similar happens with a newly created task, it can not simply have zero as the initial value of virtual runtime. If that were the case, the older tasks would not get any CPU for a long time. The new task would always get control of it until its virtual runtime reaches the one of the older tasks. This could take a very long time since some tasks may run for many months, and this would be unfair to them.
-
-To avoid this unfairness, the scheduler keeps track of the minimum virtual runtime present in the run queue. That is, the virtual runtime of the most deserving active task. Every time that a task is executed the minimum is also updated. Every time that task is added to the runqueue its virtual runtime is updated to keep thing fair.
-
-When a sleeping task is woken up, before it is queued again, the scheduler checks that its virtual runtime is at least equal to the current minimum virtual runtime. If it is not, then it is set to the minimum and inserted into the runqueue. This way the difference in virtual runtime between all the active tasks remains small and no tasks gets an unfair treatment. 
-
-When a new task is created via fork and inserted into the runqueue, it inherits the virtual runtime from the parent. This keeps the virtual runtime similar between all the tasks. It also avoids the situation where a task can take control of the CPU by continuously forking itself.
+To avoid this unfairness, the scheduler keeps track of the \textit{minimum virtual runtime} present in the run queue. That is, the virtual runtime of the most deserving active task. Every time that a task is chosen for execution, the minimum is updated. When new tasks are added to the runqueue their virtual runtime is updated to keep things fair. When a sleeping task is woken up, a similar solution is applied: before the task is queued again, the scheduler checks that its virtual runtime is at least equal to the current minimum; if it is not, then it is set to the minimum and the task is inserted into the runqueue. This way the difference in virtual runtime between all the active tasks remains small and no task gets an unfair treatment. When a new task is created via \verb|fork()| and inserted into the runqueue, it inherits the virtual runtime from the parent: this prevents the exploit where a task can take control of the CPU by continuously forking itself.
 
 \section{Multiprocessing}
 
-As mentioned in chapter \ref{ch:introduction}, nowadays most systems have more than one processor. Over the years the frequency of processors has increased in order to achieve better performances, but there are physical limitation to the frequency. Then the best way to improve the performance of a system is to add more processors. This allows us to run more processes in parallel and improve the performance, but processes often shares resources together and needs to communicate with each other, this limits the performance gained executing processes in parallel.
+As mentioned in Chapter \ref{ch:introduction}, nowadays most systems have more than one processor. Over the years, the frequencies of processors have been increased in order to achieve better performances, but there are physical limitations to this. Once we hit the limit in CPU frequency, the best way to improve the performance of a system is to add more processors. This allows us to run more processes in parallel and improve the performance, but processes often share resources together and need to communicate with each other (IPC): this factor limits the performance gained by parallel execution.
 
 \subsubsection{Theoretical performance gain}
-The performance gained with a multiprocessing system depends on the parallelizability of the processes: a process that has to wait for the result of another computation cannot be parallelized. Gene Amdahal's law\cite{amdahl} predicts the maximum theoretical improvement of multiprocessing:
+The performance gained with a multiprocessing system depends on the parallelizability of the processes: a process that has to wait for the result of another computation cannot be parallelized. Gene Amdahal's law~\cite{amdahl} predicts the maximum theoretical improvement of multiprocessing:
 \begin{equation}
-    speedup = \frac{1}{F + (1-F)/N}
+    speedup = \frac{1}{F + \frac{1-F}{N}}
 \end{equation}
-where $F$ is a factor that represent the portion of the calculation that can not be parallelized and $N$ is the number of processors.
+where $F$ is a factor that represents the portion of the calculation that cannot be parallelized and $N$ is the number of processors.
 
 \begin{tikzpicture}
   \begin{axis}[
@@ -341,34 +330,27 @@ where $F$ is a factor that represent the portion of the calculation that can not
 \end{tikzpicture}
 \label{fig:plot_cpu}
 
-The graph shows how the performance gained by adding processors depends on the type of the computation. A computation that can not be parallelized much (high value of F) will have a low performance increase with more processors. 
+The graph shows how the performance gained by adding processors depends on the type of the computation. A computation that cannot be parallelized much (high value of F) will have a low performance increase with more processors. 
 
-\subsection{Balancing}
+\subsection{Load balancing}
 
-Let's consider a single CPU with multiple cores. To achieve the best possible performance the workload should be spread evenly between the cores, this means that there shouldn't be any core that does significantly less work than another. It is one of the job of the scheduler to keep the load of each core balanced. 
+Let's consider a single CPU with multiple cores. To achieve the best possible performance, the workload should be spread evenly between the cores, and there shouldn't be any core that does significantly less work than another. It is up to the scheduler to keep the load of each core balanced.
 
-How is the load measured? The first option is to use the weights of the task. The load of a core is the sum of the weights of its tasks. But this doesn't work very well. Suppose that we have 4 tasks with the same priority, 2 are CPU intensive and 2 spend most of their time sleeping, and we want to balance the load between 2 processors. If we use only the weights of the tasks to balance, both the CPU intensive tasks could get assigned to one core, making it always busy, while the other core would be almost always idle as both of his tasks spend most of their time waiting.
-
-The approach above doesn't take in consideration the nature of the tasks. An I/O bound task will spend a lot more time sleeping than a CPU intensive task. To effectively measure the load we need to keep track of the amount of time that a task spends sleeping. This wasn't necessary when we were considering a single processor. The load of a task is a combination of its weight and its average CPU utilization. And the load of the a core is the sum of the loads of its tasks. Since the CPU utilization of a task can vary, its load is constantly updated.
+How is the load measured? The first option is to use the weights of the task. The load of a core would be the sum of the weights of its tasks, but this approach doesn't work very well. Suppose that we have 4 tasks with the same priority, 2 are CPU intensive and 2 spend most of their time sleeping, and we want to balance the load between 2 processors. If we use only the weights of the tasks to balance, both the CPU intensive tasks could get assigned to one core, making it always busy, while the other core would be almost always idle as both of his tasks spend most of their time waiting. This approach doesn't take into consideration the nature of the tasks (CPU bound vs I/O bound). To effectively measure the load, we need to keep track of the amount of time that a task spends sleeping. Hence, the load of a task becomes a combination of its weight and its average CPU utilization, and the load of the a core is the sum of the loads of its tasks. Since the CPU utilization of a task can vary, its load is constantly updated.
 
 \subsubsection{Migrating tasks}
-The scheduler periodically checks that the load of all the CPUs is balanced. In case it is not, the scheduler tries to migrate the tasks from one CPU to another in order to keep the balance. But the structure of the system plays an important role. The migration of a task could be expensive and, in some cases, it could be more efficient to not move the task.
+The scheduler periodically checks that the load of all the CPUs is balanced. In case it is not, the scheduler tries to migrate the tasks from one CPU to another: this operation is called \textit{task migration}. The migration of a task could be expensive and, in some cases, it could be more efficient to not move the task at all. The memory access design of the CPU plays an important role and can change radically how expensive it is to migrate tasks. In a \textit{uniform memory access} (UMA) architecture there is one memory, and the cost of accessing it is the same for all the cores. In this case the tasks can be migrated between cores without any constraints, but having a single memory is not efficient since two cores cannot access the memory at the same time. Modern processors solve this problem by giving each core its own memory, but this creates a more complex structure. In \textit{non-uniform memory access} (NUMA) the cost of accessing the memory is no longer the same for all the cores, but depends on where the desired data is located. Specifically, memory can be local or foreign relatively to a core, and the migration cost changes drastically between the two. This means that sometimes it is more efficient to keep a task on the same core, even if the cores are not balanced. 
 
-In a simple multi-core CPU architecture there is one memory and the cost of accessing it is the same for all the cores. In this case the tasks can be migrated between cores without any constraints. But having a single memory is not efficient since two cores can not access the memory at the same time. 
+\begin{figure}[ht]
+\includegraphics[width=\textwidth]{images/numa.png}
+\caption{Local and foreign memory in a NUMA architecture}
+\label{img:numa}
+\end{figure}
+The same system could use a mix of the two structures: the cores could be divided in groups with their own memory. Accessing the memory of another group is more expensive, but inside a group all the cores can access the memory at same cost. Inside a group tasks can be migrated more frequently, while migration between groups should be less frequent. To efficiently use this structure the system gives the possibility of defining different migration policies.
 
-Modern processors solve this problem by giving each core its own memory, but this creates a more complex structure. The cost of accessing the memory is no longer the same for all the cores, but depends on where the desired data is located. This means that migrating tasks between cores could lead to some overhead and sometimes it is more efficient to keep a task on the same core instead of moving it, even if the cores are not balanced. 
+\paragraph{Domains} %mpi
+The structure of the system is described by two entities: scheduling domains and CPU groups. A scheduling domain is a set of CPUs, and a CPU group is a partition of the CPUs of a domain. A CPU inside a domain cannot belong to two groups of the same domain and every CPU has to be part of a group. The scheduler does not balance the load between single CPUs, instead it tries to balance the loads among the CPU groups of a domain.
 
-The same system could use a mix of the two structures. The cores could be divided in groups with their own memory. Accessing the memory of another group is more expensive. But inside a group all the cores can access the memory at same cost. Inside a group tasks can be migrated more frequently, while migration between groups should be less frequent. To efficiently use this structure the system gives the possibility of defining different migration policies.
+Let's take as an example a system with 2 pairs of processors. A pair shares the same memory and its processors can exchange tasks without cost. On the other hand, moving tasks between pairs is more expensive. This could be a real scenario, where a pair represents a single physical processor with inside two hyperthreaded CPUs. Each pair is represented by a domain, which contains two CPU groups, one for each processor. The groups contains only one CPU in this case. Inside this domain balancing can happen very often since it can be done without additional cost, and it is triggered by small differences in load between the groups of the domain.
 
-\paragraph{Domains}
-The structure of the system is described by two entities: scheduling domains and CPU groups. A scheduling domain is a set of CPUs, and a CPU group is a partition of the CPUs of a domain. A CPU inside a domain can not belong to two groups of the same domain and every CPU has to be part of a group. The scheduler does not balance the load between single CPUs, instead it tries to balance the loads among the CPU groups of a domain.
-
-Let's take as example a system with 2 pairs of processors. A pair shares the same memory and its processors can exchange tasks without cost. On the other hand moving tasks between pairs is more expensive. This could represent a real scenario, where a pair represent as a single physical processor with inside two hyperthreaded CPUs.
-
-Each pair is represented by a domain, which contains two CPU groups, one for each processor. The groups contains only one CPU in this case. Inside this domain balancing can happen very often since it can be done without additional cost. And the balancing is triggered by small differences in load between the groups of the domain.
-
-To allow the tasks to be migrated from one domain to another, there is also an higher level domain that includes all the CPUs. It is partitioned in two two CPU groups, one for each pair. The two groups are kept balanced, but the scheduler does not try to balance the load inside a group. This domain tries to balance the load much less often and it is more tolerant to imbalances in the load.
-
-There could also be other layers of domains. For example in a NUMA system there could be another domain representing a NUMA node, with a different migration policy.
-
-Using this domain structure the scheduler can take in consideration the organization of the system when balancing the CPUs allowing for more efficient choices.
+To allow the tasks to be migrated from one domain to another, there is also an higher level domain that includes all the CPUs. It is partitioned in two CPU groups, one for each pair. The two groups are kept balanced, but the scheduler does not try to balance the load inside a group. This domain tries to balance the load much less often and it is more tolerant to imbalances in the load. There could also be other layers of domains: for example, in a NUMA system there could be another domain representing a NUMA node, with a different migration policy. By using this domain structure, the scheduler can take in consideration the organization of the system when balancing the CPUs, allowing for more efficient choices.

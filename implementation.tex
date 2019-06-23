@@ -3,60 +3,141 @@
 
 \section{Structs and their role}
 
-\subsection{How are task represented}
-
 \paragraph{task\_struct}
-As mentioned in chapter 1, each task in the system is represented by a \newline \verb|task_struct|, which contains all the information about a task. Here we give some of the fields used by the scheduler:
+As mentioned in chapter \ref{ch:introduction}, each task in the system is represented \newline by a  \verb|task_struct|, which contains all the information about it. Here we list some of the fields used by the scheduler, and then cover them in detail.
 \begin{itemize}
-    \item \verb|thread_info|. This struct is architecture dependant and can contain various fields. The most important for the scheduler is the \verb|flags|'s field. This flags are used to keep track of requests or signals from and for the task, a few example are: \verb|TIF_SIGPENDING| means that the process has pending signals, \verb|TIF_MEMDIE| means that the process is being killed to reclaim memory. There are two flags that are important for the scheduler: \verb|TIF_NEED_RESCHED| and \verb|TIF_POLLING_NRFLAG|. The first indicates that scheduling must be performed and the second that the idle process is polling the \verb|TIF_NEED_RESCHED| flag. %from cesati's book
-    \item \verb|state|, a long that represent the state of the task: -1 unrunnable, 0 runnable, $>0$ stopped. 
-    \item \verb|on_rq| indicates if the process is currently on the runqueue
-    \item \verb|static_prio| and \verb|normal_prio|. The first is the priority used for real-time scheduling policies. If the task is scheduled under one of the normal scheduling policies \verb|static_prio| is set to zero and \verb|normal_prio| is used.
-    \item \verb|sched_class| the scheduling class, see chapter 2.
-    \item \verb|sched_entity| this struct contains all the other information needed by the scheduler.
+    \item \verb|thread_info|. This struct is architecture dependant and can contain various fields. The most important for the scheduler is the \verb|flags| field. These flags are used to keep track of requests or signals from and for the task. \verb|TIF_SIGPENDING| means that the process has pending signals, \verb|TIF_MEMDIE| means that the process is being killed to reclaim memory. In particulare, there are two flags that are crucial for the scheduler: \verb|TIF_NEED_RESCHED| and \verb|TIF_POLLING_NRFLAG|. The first indicates that scheduling must be performed, and the second that the idle process is polling the \verb|TIF_NEED_RESCHED| flag.
+    %from cesati's book
+    \item \verb|state|. A long that represents the state of the task: -1 unrunnable, 0 runnable, $>0$ stopped. 
+    \item \verb|on_rq|. Indicates if the process is on the runqueue.
+    \item \verb|static_prio| and \verb|normal_prio|. The first is the priority used for real-time scheduling policies. If the task is scheduled under one of the normal scheduling policies \verb|static_prio| is set to zero and \verb|normal_prio| is used. This number is an internal representation used in the kernel, different from the priority value shown in user space.
+    \item \verb|sched_entity|. This struct contains all the other information needed by the scheduler.
+    \item Pointer to \verb|sched_class|. The scheduling class discussed in chapter \ref{ch:sched}. Contains a circular list of all scheduling classes.
+    \item Pointer to \verb|mm_struct|. This struct represents the slice of virtual memory used by the process. Here, ``\verb|mm|'' stands for \textit{memory management}.
 \end{itemize}
 
-\paragraph{sched\_entity}
-The \verb|sched_entity| struct is one of the most important for the scheduler. It represent a schedulable entity.
-A \verb|sched_entity| may be organized in a hierarchy of entities, this is done to allow group scheduling and it is optional. Suppose that there are more users using a system and we want to share the CPU equally between them, but they have different processes running. With normal CFS, discussed in the previous chapter, each task is present in the runqueue and they are scheduled independently. Organizing the entities in hierarchies we can group together the tasks and schedule them as a single entity. In the previous example we would have only two entities on the runqueue, one for each user, and a corresponding runqueue containing all the task of that user. The scheduler decides which of the two entities to schedule, as if there were only two tasks running and then repeats the process for the sub-queue. This means that a \verb|sched_entity| does not always correspond to a process, only the leafs of this structure correspond to a task. 
-
-The most important fields that compose this struct are:
-\begin{itemize}
-    \item \verb|load_weight|: it's a struct that contains the weight of the entity. The role of the weight is discussed in chapter 2.
-    \item \verb|struct rb_node run_node|: represents a node inside a red-black tree.The next section shows that the runqueue is organized as a red-black tree.
-    \item \verb|on_rq|: indicates that the entity is on the runqueue.
-    \item \verb|exec_start|: It's the time at which the task starts its execution on the CPU.
-    \item \verb|sum_exec_runtime|: it's the total time that the task has spent actually running on the CPU before being weighted.
-    \item \verb|vruntime|: it's the weighted total time that the has spent running, virtual runtime is discussed in chapter 2.
-    \item \verb|struct sched_entity *parent|: it's the parent node in the hierarchy.
-    \item \verb|struct cfs_rq *cfs_rq|: it's the runqueue on which this entity is queued.
-    \item \verb|struct cfs_rq *cfs_rq|: it's the runqueue belonging to this group. The children of this entity are queued here.
-\end{itemize}
 \paragraph{thread\_info}
-\paragraph{mm\_struct}
+This structure is very small and contains only basic information useful for scheduling, and each process has its own \verb|thread_info|. In figure \ref{img:stack} from chapter \ref{ch:introduction} it is shown that this struct is located at the bottom of kernel stacks. The small size of this struct is due to the fact that it has to fit in the small kernel stacks while not occupying too much space. Today, the implementation of \verb|thread_info| has changed: it is now embedded directly in \verb|task_struct|. 
 
-\subsection{Runqueue}
+\begin{code}
+struct task_struct {
+#ifdef CONFIG_THREAD_INFO_IN_TASK
+	/*
+	 * For reasons of header soup (see current_thread_info()), this
+	 * must be the first element of task_struct.
+	 */
+	struct thread_info  thread_info;
+#endif
+// ...
+\end{code}
+With the previous implementation, \verb|thread_info| and \verb|task_struct| referenced each other through pointers. As shown in this code, if \verb|CONFIG_THREAD_INFO_IN_TASK| is defined, the field is not a pointer. With this new implementation, \verb|thread_info| is not located in the kernel stack. In order to access it, a pointer to the current task's \verb|thread_info| is saved, and its \verb|task_struct| can be accessed with the ``\verb|container_of()|'' trick discussed in chapter \ref{ch:introduction}. The implementation is very architecture dependent and this is specific to x86.
 
-%to reorder, just moved here
-\paragraph{Red-Black Tree}
-%do we need an introduction on how red-black trees works?
-The runnable tasks are stored inside a red-black tree, this allows us to perform efficienty many of the function that we need.
-%basics of red-black trees
-A Red-black Tree is a type of self-balancing binary search tree, this means that the insertion and the deletion of an element try to keep the height of the tree as small as possible. This characteristic is important because the cost of the most common functions (search, insertion and deletion) is proportional to the height of the tree, in this case log(n) where n is the number of nodes in the tree.
-%how is it used in cfs
-As we said before, the task to run next, is the one with the smallest vruntime, in a red-black tree this is the task corresponding to the leftmost node of tree. (In reality we don't traverse the tree, we cache the leftmost node in order to retrieve it faster).
-
-%kernel threads have mm at null
-%Need to explain mm_struct and some memory management
-% explain kernel stacks -> thread\_info and current macro (only valid in process context in kernel)
-%kernel preemption and user preemptio, returning to user space (entry.S which defines entry and exit instruction)
-\section{Core} 
-\label{sec:core}
-Explain address spaces, kernel threads and user threads, maybe mm\_struct
-%show trace to see order of function call
+%TODO kernel preemption and user preemption, returning to user space (entry.S which defines entry and exit instruction)
 %arch/x86/entry/entry_64.S explain kernel preemption e user preemption
 
-\section{Time Keeping}%Introduction on time management
+%TODO explain TIF_NEED_RESCHED briefly (see cesati?)
+
+\paragraph{sched\_entity}
+The \verb|sched_entity| struct represent a \textit{schedulable entity}. From the scheduler's perspective, there is no difference between a process, a thread or even a whole group of processes: they are all just schedulable entities represented by this struct, and scheduler is oblivious to their real nature. Because of this, the scheduler works only with schedulable entities and not \verb|task_struct|s. For example, runqueues contain schedulable entities. 
+
+A \verb|sched_entity| may be organized in a hierarchy of entities, this is done to allow group scheduling and it is optional. Suppose that there are more users using a system and we want to share the CPU equally between them, but they have different processes running. With normal CFS, each task is present in the runqueue and it is scheduled independently. By organizing the entities in hierarchies, we can group together the tasks and schedule them as a single schedulable entity. In the previous example we would have only two entities on the runqueue, one for each user, and a corresponding runqueue containing all the task of that user. The scheduler decides which of the two entities to schedule, as if there were only two tasks running, and then repeats the process for the sub-queue. As stated earlier, a \verb|sched_entity| does not always correspond to a process; only the leafs of this structure correspond to a task. 
+
+The most important fields that compose \verb|sched_entity| are:
+\begin{itemize}
+    \item \verb|load_weight|. It contains the weight of the entity. The role of the weight is discussed in chapter \ref{ch:sched}.
+    \item \verb|struct rb_node run_node|. Represents a node inside a red-black tree. The next section shows that the runqueue is organized as a red-black tree. This field is embedded in this struct because the implementation is similar to lists.
+    \item \verb|on_rq|. Indicates if the entity is on the runqueue.
+    \item \verb|exec_start|. The time at which the task started its execution on the CPU. %resetted each time (calc_delta_fair)
+    \item \verb|sum_exec_runtime|. The total time that the task has actually spent running on the CPU before being weighted.
+    \item \verb|vruntime|. The weighted total time that the task has spent running.
+    \item \verb|struct sched_entity *parent|. The parent node in the hierarchy.
+    \item \verb|struct cfs_rq *cfs_rq|. The runqueue on which this entity is queued.
+    \item \verb|struct cfs_rq *my_q|. If this is a group, this is the sub-runqueue of this group. The children of this entity are queued here.
+\end{itemize}
+These fields are specific to CFS, where the runqueue is a red-black tree (\verb|rb_node| and \verb|cfs_rq|), and the timeslice is based on virtual runtime (\verb|exec_start| and \verb|sum_exec_runtime| are used to calculate vruntime). The other scheduling class have their own entity, such as \verb|sched_rt_entity| and \verb|sched_dl_entity|, defining its specific fields. \verb|sched_entity| is not called \verb|sched_fair_entity| supposedly because the fair class is the default. 
+
+\paragraph{sched\_class}
+This structure contains function pointers to the scheduler routines, specific to the scheduling class. Each class has routines that do the same thing, but with different implementations.
+
+\begin{code}
+struct sched_class {
+	const struct sched_class *next; //Circular list of all classes
+
+	void (*enqueue_task) (struct rq *rq, struct task_struct *p, int flags);
+	void (*dequeue_task) (struct rq *rq, struct task_struct *p, int flags);
+	void (*yield_task)   (struct rq *rq);
+	bool (*yield_to_task)(struct rq *rq, struct task_struct *p, bool preempt);
+	void (*check_preempt_curr)(struct rq *rq, struct task_struct *p, int flags);
+
+	/*
+	 * It is the responsibility of the pick_next_task() method that will
+	 * return the next task to call put_prev_task() on the @prev task or
+	 * something equivalent.
+	 *
+	 * May return RETRY_TASK when it finds a higher prio class has 
+	 * runnable tasks.
+	 */
+	struct task_struct * (*pick_next_task)(struct rq *rq,
+					       struct task_struct *prev,
+					       struct rq_flags *rf);
+    // ...
+    void (*task_tick)(struct rq *rq, struct task_struct *p, int queued);
+    void (*update_curr)(struct rq *rq);
+    // ...
+}
+\end{code}
+When scheduling, the class list is visited, starting from the higher priority class: if there is no process to schedule the next class is visited. This keeps going until something to schedule is found, then the correct function pointers are used to carry out the scheduler's jobs. 
+
+This structure is a good reference to understand the code because it essentially lists all the main scheduler routines, which are covered in the next section.
+
+\paragraph{mm\_struct} %TODO no code, see https://www.tldp.org/LDP/tlk/kernel/processes.html
+%kernel threads have mm at null
+%Need to explain mm_struct and some memory management (virtual memory and address spaces?)
+TODO mm switched during context switch
+
+\begin{figure}[ht]
+\includegraphics[width=\textwidth]{images/mm.jpg}
+\caption{The structures used for virtual memory \url{https://www.tldp.org/LDP/tlk/kernel/processes.html}}
+\label{img:mm}
+\end{figure}
+
+\paragraph{procfs}
+The information contained in these structures can be accessed from outside the kernel with specific tools (covered in detail in Chapter \ref{chap:ftrace}). One approach to accomplish this it to use \verb|procfs|. In short, \verb|procfs| is a special filesystem that contains all the kernel information about processes, making it easy to access it from user space. For example, it is possible to gather scheduling information about process with pid 1196 by executing \verb|cat /proc/1196/schedstat|. This gives the following human-readable output:
+
+\begin{verbatim}
+tilda (1196, #threads: 3)
+-------------------------------------------------------------------
+se.exec_start                                :      26964101.112552
+se.vruntime                                  :       2272975.687429
+se.sum_exec_runtime                          :         10181.684621
+se.nr_migrations                             :                11160
+nr_switches                                  :                40529
+nr_voluntary_switches                        :                40104
+nr_involuntary_switches                      :                  425
+se.load.weight                               :              1048576
+se.avg.load_sum                              :              2453334
+se.avg.util_sum                              :              2417183
+se.avg.load_avg                              :                   45
+se.avg.util_avg                              :                   45
+se.avg.last_update_time                      :       26964101112552
+policy                                       :                    0
+prio                                         :                  120
+clock-delta                                  :                   50
+mm->numa_scan_seq                            :                    0
+numa_pages_migrated                          :                    0
+numa_preferred_nid                           :                   -1
+total_numa_faults                            :                    0
+current_node=0, numa_group_id=0
+numa_faults node=0 task_private=0 task_shared=0 
+group_private=0 group_shared=0
+\end{verbatim}
+Here, ``\verb|se|'' is the name of the field of type \verb|sched_entity| in \verb|task_struct|.
+
+\paragraph{Red-black tree}
+The runnable tasks are stored inside a red-black tree, which allows more efficiency. A red-black tree is a type of self-balancing binary search tree: this means that the insertion and deletion operations will keep the height of the tree as small as possible. This characteristic is important because the cost of the most common functions (search, insertion and deletion) is proportional to the height of the tree.
+As stated before, the task to run next is the one with the smallest vruntime. In a red-black tree, this corresponds to the task in the leftmost node. When picking the next task the tree is not traversed, instead, the leftmost node is cached in a dedicated variable in order to retrieve it faster.
+
+\section{Time keeping}%correggi da qui
 \label{sec:timekeeping}
 Many functions of the kernel need to keep track of the passing of the time. The scheduler, for example, needs to know for how long a task has been running in order to know when to preempt it and give the control of the CPU to another task. But there are many other functions that are time-driven, so it's important to understand how the system keeps track of the time.
 
@@ -127,7 +208,7 @@ The other important thing this function does is invoking the \verb|scheduler_tic
 
 \section{Scheduler routines}
 
-We will now analyse in more detail how the scheduling works and the most important functions involved. In the last section we saw how the system can perform periodic functions at fixed intervals to measure the passing time.
+We will now analyze in more detail how the scheduling works and the most important functions involved. In the last section we saw how the system can perform periodic functions at fixed intervals to measure the passing time.
 
 %If there are events in the fuction, explain them in the FTRACE section
 %show trace starting from the timer interrupt, using function_graph tracer
@@ -153,7 +234,6 @@ selected schedule() calls from the script here
 \end{Verbatim}
 
 \subsection{scheduler\_tick()}
-
 As we mentioned in the previous section the \verb|scheuler_tick()|  function is called by the interrupt handler at every tick, this means that it is called with a frequency of HZ.
 
 \begin{code}
@@ -289,9 +369,6 @@ The other way it can trigger a reschedule is if the difference between the virtu
 This function simply sets the \verb|TIF_NEED_RESCHED| which indicates that the current task needs to be rescheduled. When resuming the execution of a user process, the flag is check and if it is set, the schedule function is called, this will select the next task to run.
 %explain wake_idle_without_ipi and when it is called
 
-  
-
-
 \subsection{Adding a task to the runqueue}
 
 A task can be added to the runqueue in 2 cases: when it is created, when it is woken up after sleeping.
@@ -356,3 +433,9 @@ Whether the task was just created or it was woken up from sleep, his \verb|task_
 \subsubsection{schedule()}
 
 \subsubsection{context\_switch()}
+
+% in cfs_rq
+%     struct sched_entity	*curr;
+% 	struct sched_entity	*next;
+% 	struct sched_entity	*last;
+% 	struct sched_entity	*skip;

@@ -82,7 +82,7 @@ Calling wrappers is also very safe since it avoids to accidentally fill the wron
 It's important to note that the kernel can protect itself against invalid syscall arguments in registers. This is crucial since, as we saw, syscalls are easily called from user space directly by executing the proper assembly instructions.
 
 \subsection{A different kind of software}
-The separation between kernel/user space and the fact that we are working at such low level makes the kernel a very peculiar piece of software. One of its properties is that there is no error checking, this is because the kernel trusts itself: all kernel functions are assumed to be error-free, so the kernel does not need to insert any protection against programming errors\cite{cesati}. Instead, what the kernel does is to use assertions to check hardware and software consistency; if they fail then the system goes into \textit{kernel panic} and halts. Later on in Section \mycomment{EB: aggiungere riferimento a dove si vedra`}, it is shown an example of code where the \verb|panic()| routine is called. The choice of checking assertion (and possibly going to kernel panic is something went wrong) is that since the kernel controls the system itself, error recovery and error correction is very hard and would take a huge part of the code. Another way of thinking about it, is that there is no meta-kernel that handles kernel errors. Of course programming or hardware errors can (and will) still occur: when this happens the offending process is killed and a memory dump called ``\textit{oops}'' is created. A typical example of this is when the kernel dereferences a NULL pointer: in user space this would cause a \textit{segmentation fault}, while in the kernel it will generate an oops or in the worst case go directly into panic. After this kind of event, the kernel can no longer be trusted and the best thing to do would be to reboot, because the kernel is in a semi-usable state and it could potentially corrupt memory. Furthermore, a panic in this state is more likely to happen. %oops count after the first one?
+The separation between kernel/user space and the fact that we are working at such low level makes the kernel a very peculiar piece of software. One of its properties is that there is no error checking, this is because the kernel trusts itself: all kernel functions are assumed to be error-free, so the kernel does not need to insert any protection against programming errors\cite{cesati}. Instead, what the kernel does is to use assertions to check hardware and software consistency; if they fail then the system goes into \textit{kernel panic} and halts. Later on in Section \ref{ch:events_documentation}, it is shown an example of code where the \verb|panic()| routine is called. The choice of checking assertion (and possibly going to kernel panic is something went wrong) is that since the kernel controls the system itself, error recovery and error correction is very hard and would take a huge part of the code. Another way of thinking about it, is that there is no meta-kernel that handles kernel errors. Of course programming or hardware errors can (and will) still occur: when this happens the offending process is killed and a memory dump called ``\textit{oops}'' is created. A typical example of this is when the kernel dereferences a NULL pointer: in user space this would cause a \textit{segmentation fault}, while in the kernel it will generate an oops or in the worst case go directly into panic. After this kind of event, the kernel can no longer be trusted and the best thing to do would be to reboot, because the kernel is in a semi-usable state and it could potentially corrupt memory. Furthermore, a panic in this state is more likely to happen. %oops count after the first one?
 Possibly, the user experiencing the kernel panic may also inform the kernel mantainers.
 
 % Ricordare di mettere parentesi quando si citano funzioni
@@ -95,7 +95,7 @@ The same applies to the execution. Every process in the system has two stacks, l
 This leads us to an interesting example of the kernel trusting itself: it makes the strong assumption that the stack will never overflow: \textbf{no protection against it is in place}. So what happens if it overflows? First, it will corrupt the \verb|thread_info| data structure, which is the first data that the stack encounters along its path (Figure \ref{img:stack}). This will make the process nonexistent for the kernel and cause a memory leak (we will see why). Next, the stack can overflow outside of the address space and silently corrupt whatever kernel data is stored; the best case scenario here would be a kernel panic to prevent any further memory corruption. Another natural question might be ``why are kernel stacks so small?'' and the answer is simple: first, to use a small amount of kernel memory, and secondly, because of fragmentation. The bigger is your data structure in contiguous physical memory, the more it is hard to allocate. It is expected that any process stays in kernel mode for a small amount of time, so it should use a very small portion of the stack. A consequence of small stacks is that very few recursive functions are used to avoid long call chains and minimize stack usage; the same is true for big static allocations on the stack. %check this
 
 \begin{figure}[ht]
-\includegraphics[width=\textwidth]{images/stack.png}
+\includegraphics[width=\textwidth]{images/stack}
 \caption{The kernel stack inside its small address space of two pages, it grows downward towards low memory.}
 \label{img:stack}
 \end{figure}
@@ -106,7 +106,6 @@ It's important to note that there are special processes called \textit{kernel th
 
 \subsection{A monolithic design}
 \label{sec:monolithic}
-\mycomment{MP: TODO questa sezione è nuova e va revisionata}
 There are fundamentally different design approaches in kernel development. We can see these as a spectrum, where on one end there is the \textit{monolithic kernel}, and on the other one the \textit{microkernel} (or $\mu kernel$). The choice depends on how many services are located in kernel space: while in monolithic design every service is in the kernel itself, microkernels strive to reduce as much as possible the code running in kernel space. This is done by moving most services in user space, while keeping only essential primitives in the kernel (Figure \ref{img:monolithic}).
 
 \begin{figure}[ht]
@@ -139,9 +138,10 @@ Finally, the hybrid design is halfway between monolithic and microkernel, as it 
 \section{Process management}
 The kernel is divided into subsystems that interact with each other. Figure \ref{img:kernelmap} is a zoom into the kernel mechanisms inside the red part of Figure \ref{img:userspace_kernelspace}. The image represents the part of the kernel that will be covered, for the most part we will swing between the scheduling and memory mapping subsystems. The names in the picture are structs, functions or source code files; we will get familiar with most of these as we go on.
 
-\begin{figure}[ht]
-\includegraphics[width=\textwidth]{images/kernelmap.png}
-\caption{A portion of the kernel subsystems map}
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\textwidth]{images/kernelmap.png}
+\caption{A portion of the kernel subsystems map (source: \url{www.google.com})}
 \label{img:kernelmap}
 \end{figure}
 
@@ -157,13 +157,20 @@ This confusing way of using IDs was implemented to comply with POSIX standards, 
 
 %You can already see how ``process'' and ``thread'' are being used interchangeably. As anticipated, this terminology can be confusing so let's clarify.
 The real difference between threads and processes is that threads share the same address space, while processes do not. By saying that some threads are associated to a same process just means that they are sharing an address space. This enables concurrent programming, enables communication among threads via shared memory, and requires then synchronization methods. As shown in Section \ref{sec:scheduling},
-using threads in a program instead of spawning new processes results in much better performance, which is why threads are sometimes called \textit{lightweight processes} or LWP. %wait, what if the thread stacks in the same address space overlap?
-\mycomment{EB: dove \`e stato trovato il codice che segue? Nelle man page il prototipo della clone() sembra diverso}
+using threads in a program instead of spawning new processes results in much better performance, which is why threads are sometimes called \textit{lightweight processes} or LWP.
 \begin{code}
+//stack size for cloned child
+const int STACK_SIZE = 65536;
+//start and end of stack buffer area
+char *stack, *stackTop;
+// ... define child startup function "do_something" ...
+stack = malloc(STACK_SIZE);
+stackTop = stack + STACK_SIZE; //stack grows downward
+
 //spawns a new thread
-clone(CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND, 0); 
+clone(&do_something, stack + STACK_SIZE, CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND, 0); 
 //spawns a new process, this is the same as using fork()
-clone(SIGCHLD, 0); 
+clone(&do_something, stack + STACK_SIZE, SIGCHLD, 0); 
 \end{code}
 The system call \verb|clone()| spawns a new child process. It's very
 similar to \verb|fork()| but it's more versatile because flags can be
@@ -225,8 +232,7 @@ struct task_struct {
 	struct list_head		thread_node;
 };
 \end{code}
-\verb|include/linux/sched.h|
-
+Code from \verb|include/linux/sched.h|\newline
 These are some of the most basic fields the struct, most of them are self explanatory.
 
 The \verb|volatile| keyword asks the compiler not to optimize by
@@ -253,7 +259,7 @@ the corresponding process descriptor. This procedure is, for example,
 applied when the command \verb|kill [PID]| is launched.
 
 \begin{figure}[ht]
-\includegraphics[width=\textwidth]{images/pidhash1.png}
+\includegraphics[width=\textwidth]{images/pidhash1}
 \caption{Pid hash table, pids 199 and 29384 are both hashed to 199}
 \label{img:pidhash1}
 \end{figure}
@@ -267,8 +273,7 @@ enum pid_type {
 	PIDTYPE_MAX
 };
 \end{code}
-\verb|include/linux/pid.h|
-
+Code from \verb|include/linux/pid.h|\newline
 There are actually four tables, one for each PID type. Each of these tables is an array of \verb|hlist_head|, the head of the chain list, which points to a list of \verb|hlist_node| (see Figure \ref{img:pidhash2}). These  structures are used for non-circular lists. These lists are populated by \verb|struct pid|, and a pointer to this struct is stored inside each process descriptor in the \verb|thread_pid| field. Figure~\ref{img:pidhash2} shows an example for the TGID class that we discussed earlier. PIDs in the chain list are colliding and are different processes, PIDs in the \verb|pid_list| are threads in the same group, where the leftmost thread in the image is the group leader. Despite the name ``\verb|list_head|'' inside the pid structure, such a field points to a circular list, and since it's circular there's really no head structure that points to the first element. %CHECK THIS
 
 \begin{code}
@@ -279,14 +284,13 @@ struct pid {
 	struct list_head pid_list;  // per-PID list
 };
 \end{code}
-\verb|include/linux/pid.h|
+Code from \verb|include/linux/pid.h|
 
 \begin{figure}[ht]
-\includegraphics[width=\textwidth]{images/pidhash2.png}
+\includegraphics[width=\textwidth]{images/pidhash2}
 \caption{Hash table for the TGID pid type}
 \label{img:pidhash2}
 \end{figure}
-
 The implementation of \verb|struct pid| is slightly different from what was presented, with other nested structures and a different linkage to the hash table. %The way pids are organized is conceptually the same so I presented it like this for semplicity's sake.
 In this section, only a small portion of the process descriptor is described. Other fields are illustrated in Section~\ref{chap:implementation}.
 
@@ -318,14 +322,12 @@ The data is not contained in the list itself, but in another structure that cont
 #define list_entry(ptr, type, member) \
         container_of(ptr, type, member)
 \end{code}
-\mycomment{EB: non capisco la frase seguente}
-\mycomment{MP: include/linux/kernel.h sarebbe la caption}
-\verb|include/linux/kernel.h|
-ptr is the pointer to the list node, type is the container struct, member is the field name of the list node in the container struct. We first cast ptr to a void pointer, then we subtract the offset from the beginning of the container struct of the field we want to get. When we allocate a struct, its field are allocated contiguously in virtual memory in the order that we declared them: this means that by moving the pointer backwards from a field by the right amount, we can end up at the beginning of the container structure. This is how we can get the offset of the specified field in any struct. 
+Code from \verb|include/linux/kernel.h|\newline
+ptr is the pointer to the list node, type is the container struct, member is the field name of the list node in the container struct. We first cast ptr to a void pointer, then we subtract the offset from the beginning of the container struct of the field we want to get. When we allocate a struct, its field are allocated contiguously in virtual memory in the order that we declared them: this means that by moving the pointer backwards from a field by the right amount, we can end up at the beginning of the container structure. This is how we can get the offset of the specified field in any struct:
 \begin{code}
 #define offsetof(TYPE, MEMBER) ((size_t)&((TYPE *)0)->MEMBER)
 \end{code}
-\verb|include/linux/stddef.h|
+Code from \verb|include/linux/stddef.h|\newline
 TYPE is the struct we are considering, MEMBER is the name of the field, what it does is:
 \begin{enumerate}
     \item Take the address 0, the first in the address space of the process

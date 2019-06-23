@@ -1,27 +1,18 @@
 \chapter{Scheduler events}
-\label{ch:events}
+\label{ch:events_documentation}
 %show /proc/PID/sched scheduling info
 A simple script can give us the tracepoint location of every event that we are looking for.
 \begin{codebash}
 #!/bin/bash
-# find_sched_events.sh TODO FIXME
+# find_sched_events.sh
 events=$(ls /sys/kernel/debug/tracing/events/sched | grep "sched_" | sort)
 cd /path/to/linux-4.20.13
 for i in $events
 do
-	grep -rin "$i" >> ../events_output
+	grep -rin "trace_$i" >> ../events_output
 done
 \end{codebash}
 This gives us the following output:
-\begin{Verbatim}
-output here
-\end{Verbatim}
-
-\dots
-\mycomment{MP: dove c'è il tracepoint della exit ci sta un panic(). mostralo e citalo nel primo capitolo}
-
-\section{Tracepoints reminder (will remove)} 
-
 \begin{Verbatim}[xleftmargin=-2cm,fontsize=\footnotesize]
 fs/exec.c:1698:		trace_sched_process_exec(current, old_pid, bprm);
 
@@ -43,14 +34,14 @@ kernel/sched/core.c:1358:		trace_sched_wait_task(p);
 kernel/sched/core.c:1659:	trace_sched_wakeup(p);
 kernel/sched/core.c:1798:			trace_sched_wake_idle_without_ipi(cpu);
 kernel/sched/core.c:1813:		trace_sched_wake_idle_without_ipi(cpu);
+kernel/sched/core.c:473:		trace_sched_wake_idle_without_ipi(cpu);
+kernel/sched/core.c:545:		trace_sched_wake_idle_without_ipi(cpu);
 kernel/sched/core.c:1970:	trace_sched_waking(p);
 kernel/sched/core.c:2100:	trace_sched_waking(p);
 kernel/sched/core.c:2425:	trace_sched_wakeup_new(p);
 kernel/sched/core.c:2425:	trace_sched_wakeup_new(p);
 kernel/sched/core.c:3469:		trace_sched_switch(preempt, prev, next);
 kernel/sched/core.c:3797:	trace_sched_pi_setprio(p, pi_task);
-kernel/sched/core.c:473:		trace_sched_wake_idle_without_ipi(cpu);
-kernel/sched/core.c:545:		trace_sched_wake_idle_without_ipi(cpu);
 kernel/sched/core.c:5485:	trace_sched_move_numa(p, curr_cpu, target_cpu);
 
 kernel/sched/fair.c:1836:			trace_sched_stick_numa(p, env.src_cpu, env.best_cpu);
@@ -60,7 +51,49 @@ kernel/sched/fair.c:886:		trace_sched_stat_wait(p, delta);
 kernel/sched/fair.c:925:			trace_sched_stat_sleep(tsk, delta);
 kernel/sched/fair.c:944:				trace_sched_stat_iowait(tsk, delta);
 kernel/sched/fair.c:947:			trace_sched_stat_blocked(tsk, delta);
+\end{Verbatim}
 
+There are 24 events and 31 tracepoints.
+
+\mycomment{MP: dove c'è il tracepoint della exit ci sta un panic(). mostralo e citalo nel primo capitolo}
+
+%ls /sys/kernel/debug/tracing/events/sched | grep "sched_" | wc -l
+\section{Events in \texttt{core.c}} %MANCA UN EVENTO
+
+\paragraph{\texttt{trace\_sched\_migrate\_task}}
+\paragraph{\texttt{trace\_sched\_swap\_numa}}
+\paragraph{\texttt{trace\_sched\_wait\_task}}
+\paragraph{\texttt{trace\_sched\_wakeup}}
+\paragraph{\texttt{trace\_sched\_wake\_idle\_without\_ipi}}
+\paragraph{\texttt{trace\_sched\_waking}}
+\paragraph{\texttt{trace\_sched\_wakeup\_new}}
+\paragraph{\texttt{trace\_sched\_switch}}
+\paragraph{\texttt{trace\_sched\_pi\_setprio}}
+\paragraph{\texttt{trace\_sched\_move\_numa}}
+
+\section{Events in \texttt{fair.c}}
+
+\paragraph{\texttt{trace\_sched\_stick\_numa}}
+\paragraph{\texttt{trace\_sched\_stat\_runtime}}
+Mentioned in Chapter \ref{chap:ftrace}.
+\paragraph{\texttt{trace\_sched\_stat\_wait}}
+\paragraph{\texttt{trace\_sched\_stat\_sleep}}
+\paragraph{\texttt{trace\_sched\_stat\_iowait}}
+\paragraph{\texttt{trace\_sched\_stat\_blocked}}
+
+\section{Events in other source files}
+
+\paragraph{\texttt{trace\_sched\_process\_wait}}
+\paragraph{\texttt{trace\_sched\_process\_free}}
+\paragraph{\texttt{trace\_sched\_process\_exit}}
+\paragraph{\texttt{trace\_sched\_process\_fork}}
+\paragraph{\texttt{trace\_sched\_process\_hang}}
+\paragraph{\texttt{trace\_sched\_kthread\_stop}}
+\paragraph{\texttt{trace\_sched\_kthread\_stop\_ret}}
+
+\section{Tracepoints reminder (will remove)} 
+
+\begin{Verbatim}[xleftmargin=-2cm,fontsize=\footnotesize]
 ifs:
 
 kernel/sched/fair.c:3817:	if (trace_sched_stat_wait_enabled()    ||
@@ -68,7 +101,6 @@ kernel/sched/fair.c:3818:			trace_sched_stat_sleep_enabled()   ||
 kernel/sched/fair.c:3819:			trace_sched_stat_iowait_enabled()  ||
 kernel/sched/fair.c:3820:			trace_sched_stat_blocked_enabled() ||
 kernel/sched/fair.c:3821:			trace_sched_stat_runtime_enabled())  {
-
 \end{Verbatim}
 Events details + comments found in the code
 \begin{Verbatim}
