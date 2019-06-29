@@ -1,7 +1,6 @@
 \chapter{Scheduler events}
 \label{ch:events_documentation}
-%show /proc/PID/sched scheduling info
-A simple script can give us the tracepoint location of every event that we are looking for.
+A simple script can report the tracepoint location of every event that we are looking for.
 \begin{codebash}
 #!/bin/bash
 # find_sched_events.sh
@@ -12,244 +11,592 @@ do
 	grep -rin "trace_$i" >> ../events_output
 done
 \end{codebash}
-This gives us the following output:
-\begin{Verbatim}[xleftmargin=-2cm,fontsize=\footnotesize]
-fs/exec.c:1698:		trace_sched_process_exec(current, old_pid, bprm);
+By executing the script and then ordering by source file, we obtain the following output:
 
-kernel/exit.c:1503:	trace_sched_process_wait(wo->wo_pid);
-kernel/exit.c:180:	trace_sched_process_free(tsk);
-kernel/exit.c:866:	trace_sched_process_exit(tsk);
+\begin{Verbatim}[xleftmargin=-0.5cm,fontsize=\footnotesize]
+fs/exec.c:1698: trace_sched_process_exec(current, old_pid, bprm);
 
-kernel/fork.c:2242:	trace_sched_process_fork(current, p);
+kernel/exit.c:1503: trace_sched_process_wait(wo->wo_pid);
+kernel/exit.c:180: trace_sched_process_free(tsk);
+kernel/exit.c:866: trace_sched_process_exit(tsk);
 
-kernel/hung_task.c:113:	trace_sched_process_hang(t);
+kernel/fork.c:2242: trace_sched_process_fork(current, p);
 
-kernel/kthread.c:543:	trace_sched_kthread_stop(k);
-kernel/kthread.c:554:	trace_sched_kthread_stop_ret(ret);
-kernel/kthread.c:554:	trace_sched_kthread_stop_ret(ret);
+kernel/hung_task.c:113: trace_sched_process_hang(t);
 
-kernel/sched/core.c:1171:	trace_sched_migrate_task(p, new_cpu);
-kernel/sched/core.c:1295:	trace_sched_swap_numa(cur, arg.src_cpu, p, arg.dst_cpu);
-kernel/sched/core.c:1358:		trace_sched_wait_task(p);
-kernel/sched/core.c:1659:	trace_sched_wakeup(p);
-kernel/sched/core.c:1798:			trace_sched_wake_idle_without_ipi(cpu);
-kernel/sched/core.c:1813:		trace_sched_wake_idle_without_ipi(cpu);
-kernel/sched/core.c:473:		trace_sched_wake_idle_without_ipi(cpu);
-kernel/sched/core.c:545:		trace_sched_wake_idle_without_ipi(cpu);
-kernel/sched/core.c:1970:	trace_sched_waking(p);
-kernel/sched/core.c:2100:	trace_sched_waking(p);
-kernel/sched/core.c:2425:	trace_sched_wakeup_new(p);
-kernel/sched/core.c:2425:	trace_sched_wakeup_new(p);
-kernel/sched/core.c:3469:		trace_sched_switch(preempt, prev, next);
-kernel/sched/core.c:3797:	trace_sched_pi_setprio(p, pi_task);
-kernel/sched/core.c:5485:	trace_sched_move_numa(p, curr_cpu, target_cpu);
+kernel/kthread.c:543: trace_sched_kthread_stop(k);
+kernel/kthread.c:554: trace_sched_kthread_stop_ret(ret);
+kernel/kthread.c:554: trace_sched_kthread_stop_ret(ret);
 
-kernel/sched/fair.c:1836:			trace_sched_stick_numa(p, env.src_cpu, env.best_cpu);
-kernel/sched/fair.c:1844:		trace_sched_stick_numa(p, env.src_cpu, task_cpu(env.best_task));
-kernel/sched/fair.c:833:		trace_sched_stat_runtime(curtask, delta_exec, curr->vruntime);
-kernel/sched/fair.c:886:		trace_sched_stat_wait(p, delta);
-kernel/sched/fair.c:925:			trace_sched_stat_sleep(tsk, delta);
-kernel/sched/fair.c:944:				trace_sched_stat_iowait(tsk, delta);
-kernel/sched/fair.c:947:			trace_sched_stat_blocked(tsk, delta);
+kernel/sched/core.c:1171: trace_sched_migrate_task(p, new_cpu);
+kernel/sched/core.c:1295: trace_sched_swap_numa(cur, arg.src_cpu, p, arg.dst_cpu);
+kernel/sched/core.c:1358: trace_sched_wait_task(p);
+kernel/sched/core.c:1659: trace_sched_wakeup(p);
+kernel/sched/core.c:1798: trace_sched_wake_idle_without_ipi(cpu);
+kernel/sched/core.c:1813: trace_sched_wake_idle_without_ipi(cpu);
+kernel/sched/core.c:473: trace_sched_wake_idle_without_ipi(cpu);
+kernel/sched/core.c:545: trace_sched_wake_idle_without_ipi(cpu);
+kernel/sched/core.c:1970: trace_sched_waking(p);
+kernel/sched/core.c:2100: trace_sched_waking(p);
+kernel/sched/core.c:2425: trace_sched_wakeup_new(p);
+kernel/sched/core.c:2425: trace_sched_wakeup_new(p);
+kernel/sched/core.c:3469: trace_sched_switch(preempt, prev, next);
+kernel/sched/core.c:3797: trace_sched_pi_setprio(p, pi_task);
+kernel/sched/core.c:5485: trace_sched_move_numa(p, curr_cpu, target_cpu);
+
+kernel/sched/fair.c:1836: trace_sched_stick_numa(p, env.src_cpu, env.best_cpu);
+kernel/sched/fair.c:1844: trace_sched_stick_numa(p, env.src_cpu, task_cpu(env.best_task));
+kernel/sched/fair.c:833: trace_sched_stat_runtime(curtask, delta_exec, curr->vruntime);
+kernel/sched/fair.c:886: trace_sched_stat_wait(p, delta);
+kernel/sched/fair.c:925: trace_sched_stat_sleep(tsk, delta);
+kernel/sched/fair.c:944: trace_sched_stat_iowait(tsk, delta);
+kernel/sched/fair.c:947: trace_sched_stat_blocked(tsk, delta);
 \end{Verbatim}
+There are 24 events and 31 tracepoints where they are used. The output shows the tracepoints with their respective source file and line. Thanks to this output and the developer's comments, it is now easier to understand the purpose of each event. For each event there are listed: 
+\begin{enumerate}
+    \item Its parameters
+    \item The information printed in the trace output
+    \item Usages in the code (the tracepoints)
+    \item A brief explanation
+\end{enumerate}
 
-There are 24 events and 31 tracepoints.
-
-\mycomment{MP: dove c'è il tracepoint della exit ci sta un panic(). mostralo e citalo nel primo capitolo}
-
-%ls /sys/kernel/debug/tracing/events/sched | grep "sched_" | wc -l
-\section{Events in \texttt{core.c}} %MANCA UN EVENTO
-
+\section{Events in \texttt{core.c}} 
+\dots (Work in progress) \dots
 \paragraph{\texttt{trace\_sched\_migrate\_task}}
+Tracepoint for a task being migrated.
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *p|
+    \item \verb|int dest_cpu|
+\end{itemize}
+
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|int prio|
+    \item \verb|int orig_cpu, dest_cpu|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+kernel/sched/core.c:1171
+\end{code}
+% set_task_cpu(struct task_struct *p, unsigned int new_cpu)
+Migrate a task to \verb|new_cpu|.
+  
 \paragraph{\texttt{trace\_sched\_swap\_numa}}
+//TODO
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *src_tsk|
+    \item \verb|struct task_struct *dst_tsk|
+    \item \verb|int src_cpu|
+    \item \verb|int dst_cpu|    
+\end{itemize}
+
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|pid_t src_pid, src_tgid, src_ngid|
+    \item \verb|int src_cpu, src_nid|
+    \item \verb|pid_t dst_pid, dst_tgid, dst_ngid|
+    \item \verb|int dst_cpu, dst_nid|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+kernel/sched/core.c:1295
+\end{code}
+
 \paragraph{\texttt{trace\_sched\_wait\_task}}
+Tracepoint for waiting on task to unschedule:
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *p|
+\end{itemize}
+
+\textbf{Trace output (\texttt{sched\_process\_template})}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|int prio|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+
+\end{code}
+
 \paragraph{\texttt{trace\_sched\_wakeup}}
+Tracepoint called when the task is actually woken; $p->state == TASK\_RUNNING$. It it not always called from the waking context.
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *p|
+\end{itemize}
+
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|int prio|
+    \item \verb|int success|
+    \item \verb|int target_cpu|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+./kernel/sched/core.c:1659
+\end{code}
+Mark the task runnable and perform wakeup-preemption.
+  
 \paragraph{\texttt{trace\_sched\_wake\_idle\_without\_ipi}}
+Tracepoint for waking a polling cpu without an IPI.
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|int cpu|
+\end{itemize}
+
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|int cpu|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+
+\end{code}
+
 \paragraph{\texttt{trace\_sched\_waking}}
+Tracepoint called when waking a task; this tracepoint is guaranteed to be called from the waking context.
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *p|
+\end{itemize}
+
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|int prio|
+    \item \verb|int success|
+    \item \verb|int target_cpu|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+./kernel/sched/core.c:1970
+\end{code}
+try\_to\_wake\_up - wake up a thread
+\begin{code}
+./kernel/sched/core.c:2100
+\end{code}
+try\_to\_wake\_up\_local - try to wake up a local task with rq lock held
+
 \paragraph{\texttt{trace\_sched\_wakeup\_new}}
+Tracepoint for waking up a new task:
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *p|
+\end{itemize}
+
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|int prio|
+    \item \verb|int success|
+    \item \verb|int target_cpu|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+./kernel/sched/core.c:2425
+\end{code}
+\verb|wake_up_new_task| - wake up a newly created task for the first time.
+This function will do some initial scheduler statistics housekeeping
+that must be done for every newly created context, then puts the task
+on the runqueue and wakes it.
+   
 \paragraph{\texttt{trace\_sched\_switch}}
+Tracepoint for task switches, performed by the scheduler:
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|bool preempt|
+    \item \verb|struct task_struct *prev|
+    \item \verb|struct task_struct *next|
+\end{itemize}
+
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|char *prev_comm|
+    \item \verb|pid_t prev_pid|
+    \item \verb|int prev_prio|
+    \item \verb|long prev_state|
+    \item \verb|char next_comm|
+    \item \verb|pid_t next_pid|
+    \item \verb|int next_prio|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+./kernel/sched/core.c:3469
+\end{code}
+\verb|context_switch| - switch to the new MM and the new thread's register state.
+  
 \paragraph{\texttt{trace\_sched\_pi\_setprio}}
+Tracepoint for showing priority inheritance modifying a tasks priority.
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *tsk|
+    \item \verb|struct task_struct *pi_task|
+\end{itemize}
+
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|int oldprio|
+    \item \verb|int newprio|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+
+\end{code}
+
 \paragraph{\texttt{trace\_sched\_move\_numa}}
+Tracks migration of tasks from one runqueue to another. Can be used to detect if automatic NUMA balancing is bouncing between nodes.
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *tsk|
+    \item \verb|int src_cpu|
+    \item \verb|int dst_cpu|
+\end{itemize}
+
+\textbf{Trace output (\texttt{sched\_move\_task\_template})}
+\begin{itemize}
+    \item \verb|pid_t pid, tgid, ngid|
+    \item \verb|int src_cpu, src_nid|
+    \item \verb|int dst_cpu, dst_nid|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+
+\end{code}
 
 \section{Events in \texttt{fair.c}}
-
+\dots (Work in progress) \dots
 \paragraph{\texttt{trace\_sched\_stick\_numa}}
+//TODO
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *tsk|
+    \item \verb|int src_cpu|
+    \item \verb|int dst_cpu|
+\end{itemize}
+
+\textbf{Trace output (\texttt{sched\_move\_task\_template})}
+\begin{itemize}
+    \item \verb|pid_t pid, tgid, ngid|
+    \item \verb|int src_cpu, src_nid|
+    \item \verb|int dst_cpu, dst_nid|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+
+\end{code}
+
 \paragraph{\texttt{trace\_sched\_stat\_runtime}}
-Mentioned in Chapter \ref{chap:ftrace}.
+Tracepoint for accounting runtime (time the task is executing on a CPU).
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *tsk|
+    \item \verb|u64 runtime|
+    \item \verb|u64 vruntime|    
+\end{itemize}
+
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|u64 runtime|
+    \item \verb|u64 vruntime|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+./kernel/sched/fair.c:829
+\end{code}
+
+Update the current task's runtime statistics.
+Mentioned in Section \ref{chap:ftrace}.
+
 \paragraph{\texttt{trace\_sched\_stat\_wait}}
+Tracepoint for accounting wait time (time the task is runnable but not actually running due to scheduler contention).
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *tsk|
+    \item \verb|u64 delay|
+\end{itemize}
+
+\textbf{Trace output (\texttt{sched\_stat\_template})}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|u64 delay|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+
+\end{code}
+
 \paragraph{\texttt{trace\_sched\_stat\_sleep}}
+Tracepoint for accounting sleep time (time the task is not runnable, including iowait, see below).
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *tsk|
+    \item \verb|u64 delay|
+\end{itemize}
+
+\textbf{Trace output (\texttt{sched\_stat\_template})}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|u64 delay|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+
+\end{code}
+
+
 \paragraph{\texttt{trace\_sched\_stat\_iowait}}
+Tracepoint for accounting iowait time (time the task is not runnable due to waiting on IO to complete).
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *tsk|
+    \item \verb|u64 delay|
+\end{itemize}
+
+\textbf{Trace output (\texttt{sched\_stat\_template})}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|u64 delay|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+
+\end{code}
+
 \paragraph{\texttt{trace\_sched\_stat\_blocked}}
+Tracepoint for accounting blocked time (time the task is in uninterruptible).
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *tsk|
+    \item \verb|u64 delay|
+\end{itemize}
+
+\textbf{Trace output (\texttt{sched\_stat\_template})}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|u64 delay|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+
+\end{code}
 
 \section{Events in other source files}
+\dots (Work in progress) \dots
+\paragraph{\texttt{trace\_sched\_process\_exec}}
+Tracepoint for exec:
 
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *p|
+    \item \verb|pid_t old_pid|
+    \item \verb|struct linux_binprm *bprm|
+\end{itemize}
+
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|char *filename| %bprm->filename
+    \item \verb|pid_t pid|
+    \item \verb|pid_t old_pid|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+./fs/exec.c:1698
+\end{code}
+\verb|exec_binprm(struct linux_binprm *bprm)|
+load binaries using bprm(binary parameter)
+  
 \paragraph{\texttt{trace\_sched\_process\_wait}}
+Tracepoint for a waiting task:
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct pid *pid|
+\end{itemize}
+
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|int prio|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+./kernel/exit.c:1503
+\end{code}
+
 \paragraph{\texttt{trace\_sched\_process\_free}}
+Tracepoint for freeing a task:
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *p|
+\end{itemize}
+
+\textbf{Trace output (\texttt{sched\_process\_template})}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|int prio|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+./kernel/exit.c:180
+\end{code}
+Deallocate \verb|task_struct|
+  
 \paragraph{\texttt{trace\_sched\_process\_exit}}
+Tracepoint for a task exiting:
+
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *p|
+\end{itemize}
+
+\textbf{Trace output (\texttt{sched\_process\_template})}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+    \item \verb|int prio|
+\end{itemize}
+
+\textbf{Usages}
+\begin{code}
+./kernel/exit.c:866
+\end{code}
+
+\mycomment{MP: dove c'è il tracepoint della exit ci sta un panic(). mostralo e citalo nel primo capitolo}
+  
 \paragraph{\texttt{trace\_sched\_process\_fork}}
-\paragraph{\texttt{trace\_sched\_process\_hang}}
-\paragraph{\texttt{trace\_sched\_kthread\_stop}}
-\paragraph{\texttt{trace\_sched\_kthread\_stop\_ret}}
+Tracepoint for \verb|do_fork|:
 
-\section{Tracepoints reminder (will remove)} 
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *parent|
+    \item \verb|struct task_struct *child|
+\end{itemize}
 
-\begin{Verbatim}[xleftmargin=-2cm,fontsize=\footnotesize]
-ifs:
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|char *parent_comm|
+    \item \verb|pid_t parent_pid|
+    \item \verb|char *child_comm|
+    \item \verb|pid_t child_pid|
+\end{itemize}
 
-kernel/sched/fair.c:3817:	if (trace_sched_stat_wait_enabled()    ||
-kernel/sched/fair.c:3818:			trace_sched_stat_sleep_enabled()   ||
-kernel/sched/fair.c:3819:			trace_sched_stat_iowait_enabled()  ||
-kernel/sched/fair.c:3820:			trace_sched_stat_blocked_enabled() ||
-kernel/sched/fair.c:3821:			trace_sched_stat_runtime_enabled())  {
-\end{Verbatim}
-Events details + comments found in the code
-\begin{Verbatim}
-/*
- * Tracepoint for calling kthread_stop, performed to end a kthread:
- */
-sched_kthread_stop
-
-/*
- * Tracepoint for the return value of the kthread stopping:
- */
-sched_kthread_stop_ret
-
-/*
- * Tracepoints for waking up a task:
- */
-
-/*
- * Tracepoint called when waking a task; this tracepoint is guaranteed to be
- * called from the waking context.
- */
-sched_waking:
-  ./kernel/sched/core.c:1970:
-    try_to_wake_up - wake up a thread
-  ./kernel/sched/core.c:2100:
-    try_to_wake_up_local - try to wake up a local task with rq lock held
-
-/*
- * Tracepoint called when the task is actually woken; p->state == TASK_RUNNNG.
- * It it not always called from the waking context.
- */
-sched_wakeup(./kernel/sched/core.c:1659):
-  Mark the task runnable and perform wakeup-preemption.
-
-/*
- * Tracepoint for waking up a new task:
- */
-sched_wakeup_new(./kernel/sched/core.c:2425):
- wake_up_new_task - wake up a newly created task for the first time.
-   This function will do some initial scheduler statistics housekeeping
-   that must be done for every newly created context, then puts the task
-   on the runqueue and wakes it.
-
-/*
- * Tracepoint for task switches, performed by the scheduler:
- */
-sched_switch(./kernel/sched/core.c:3469):
-  context_switch - switch to the new MM and the new thread's register state.
-
-/*
- * Tracepoint for a task being migrated:
- */
-sched_migrate_task(./kernel/sched/core.c:1171):
-  set_task_cpu(struct task_struct *p, unsigned int new_cpu)
-  Migrate a task to new_cpu.
-
-/*
- * Tracepoint for freeing a task:
- */
-sched_process_free(./kernel/exit.c:180):
-  TODO
-
-/*
- * Tracepoint for a task exiting:
- */
-sched_process_exit(./kernel/exit.c:866):
-  process exit
-
-/*
- * Tracepoint for waiting on task to unschedule:
- */
-sched_wait_task
-
-/*
- * Tracepoint for a waiting task:
- */
-sched_process_wait(./kernel/exit.c:1503):
-
-/*
- * Tracepoint for do_fork:
- */
-sched_process_fork: (./kernel/fork.c:2242)
-  _do_fork
+\textbf{Usages}
+\begin{code}
+./kernel/fork.c:2242
+\end{code}
+\verb|_do_fork|
     It copies the process, and if successful kick-starts                                                                                                   
     it and waits for it to finish using the VM if required.
+    
+\paragraph{\texttt{trace\_sched\_process\_hang}}
+Detect Hung Task
 
-/*
- * Tracepoint for exec:
- */
-sched_process_exec(./fs/exec.c:1698):
-  exec_binprm(struct linux_binprm *bprm)
-  load binaries using bprm(binary parameter)
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *tsk|
+\end{itemize}
 
-/*
- * Tracepoint for accounting wait time (time the task is runnable
- * but not actually running due to scheduler contention).
- */
-sched_stat_wait
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+\end{itemize}
 
-/*
- * Tracepoint for accounting sleep time (time the task is not runnable,
- * including iowait, see below).
- */
-sched_stat_sleep
+\textbf{Usages}
+\begin{code}
+./kernel/hung_task.c:113
+\end{code}
+Kernel thread for detecting tasks stuck in D state
+  
+\paragraph{\texttt{trace\_sched\_kthread\_stop}}
+Tracepoint for calling \verb|kthread_stop|, performed to end a kthread.
 
-/*
- * Tracepoint for accounting iowait time (time the task is not runnable
- * due to waiting on IO to complete).
- */
-sched_stat_iowait
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|struct task_struct *t|
+\end{itemize}
 
-/*
- * Tracepoint for accounting blocked time (time the task is in uninterruptible).
- */
-sched_stat_blocked
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|char *comm|
+    \item \verb|pid_t pid|
+\end{itemize}
 
-/*
- * Tracepoint for accounting runtime (time the task is executing
- * on a CPU).
- */
-sched_stat_runtime(./kernel/sched/fair.c:829):
-  Update the current task's runtime statistics.
+\textbf{Usages}
+\begin{code}
 
-/*
- * Tracepoint for showing priority inheritance modifying a tasks
- * priority.
- */
-sched_pi_setprio
+\end{code}
 
-/*
- * Detect Hung Task
- */
-sched_process_hang(./kernel/hung_task.c:113):
-  Kernel thread for detecting tasks stuck in D state
+\paragraph{\texttt{trace\_sched\_kthread\_stop\_ret}}
+Tracepoint for the return value of the kthread stopping.
 
-/*
- * Tracks migration of tasks from one runqueue to another. Can be used to
- * detect if automatic NUMA balancing is bouncing between nodes
- */
-sched_move_numa
+\textbf{Parameters}
+\begin{itemize}
+    \item \verb|int ret|
+\end{itemize}
 
-//TODO
-sched_stick_numa
+\textbf{Trace output}
+\begin{itemize}
+    \item \verb|int ret|
+\end{itemize}
 
-//TODO
-sched_swap_numa
+\textbf{Usages}
+\begin{code}
 
-/*
- * Tracepoint for waking a polling cpu without an IPI.
- */
-sched_wake_idle_without_ipi
-\end{Verbatim}
+\end{code}

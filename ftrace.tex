@@ -1,26 +1,28 @@
 \chapter{Tracing with ftrace}
 % Capitolo Marco Perronet
 \label{chap:ftrace}
-Kernel debugging is a big challenge even for the most experienced kernel developers. The problem is that if the system has, for example, latencies or synchronization issues (undetected race conditions), it's really hard to pinpoint where they're coming from. Which subsystems are involved? In which conditions does the problem arise? When the system is running, not always there is a way to know the answer. Ftrace is a debugger designed specifically to solve the issue and make the developer's life easier. It's also a great educational tool, not just to peek at what happens in the kernel, but also to help approach the source code by observing the function flow.
+Kernel debugging is a big challenge even for experienced kernel developers. For example, one difficulty is that if the system has latencies or synchronization issues (undetected race conditions), it is really hard to pinpoint where these issues are originated. Which subsystems are involved? In which conditions does the problem arise? When the system is running, there is not always  a way to know the answer. Ftrace is a debugger designed specifically to solve the issue and to ease the developer's debuggin effort. Also, it is a great educational tool, not just to peek at what happens in the kernel, but also to help approach the source code by observing the function flow.
 
-The name comes from ``function tracer'', which is one of its features, but it has many others. Each mode of tracing is simply called a \textit{tracer}, and each one comes with many options to tweak it. They can do function tracing, event tracing, measure context switch time or the time in which interrupts are disabled. Ftrace is also very extensible because it's possible to write new tracers that can be added like a module.
+The name comes from ``function tracer'', which is one of its features among many others. Each mode of tracing is simply called a \textit{tracer}, and each one comes with many options to be tuned. They can do function tracing, event tracing, measure context switch time or the time in which interrupts are disabled. Ftrace is also very extensible because it is possible to write new tracers that can be added like a module.
 
-As anticipated, one of the objectives of the thesis is to document events related with scheduling. To understand what they do and why they are useful, it's necessary to understand ftrace, which is the tool that uses them.
+As anticipated, one of the objectives of the thesis is to document events related to scheduling. To understand what they do and why they are useful, it is necessary to understand ftrace, which is the tool that uses them.
+
+
 \section{How does it work?}
 \label{sec:how_does_it_work}
 
-Tracing means recording events that occur at runtime in order to analyze the code's behavior and performance. More generally, this is called \textit{software profiling} ans it's implemented with different techniques. In our case, it's achieved by the means of \textit{code instrumentation}, which consists in adding instructions to the source code or its binary in order to profile it. There are two main ways of using ftrace, and they use two different instrumentation techniques:
+Tracing means recording events that occur at runtime in order to analyze the code behavior and performance. More generally, this is called \textit{software profiling} ans it is implemented with different techniques. In our case, it is achieved by the means of \textit{code instrumentation}, which consists in adding instructions to the source code or its binary in order to profile it. There are two main ways of using ftrace, and they use two different instrumentation techniques:
 \begin{itemize}
-    \item Function tracing, using \verb|gcc|'s code instrumentation mechanism activated by compiling with the \verb|-pg| option.
+    \item Function tracing, using code instrumentation mechanism by \verb|gcc|, enabled by compiling with the \verb|-pg| flag; and
     \item Event tracing, using \textit{tracepoints} in the source code.
 \end{itemize}
-Function tracing uses a form of dynamic profiling: this means that the tracing instructions can be toggled at runtime in the binary executable, without the need to recompile the code. The way this works is that, while compiling, \verb|gcc| adds extra \verb|NOP| assembly instructions at the beginning of every function. The position of these instructions is then saved in the binary itself, so that it will be possible to change these \verb|NOP|s into something else. This is exactly what ftrace does: it toggles tracing by changing these instructions at runtime; they are converted to \verb|JMP| instructions to tracing functions, and then back to \verb|NOP| to disable tracing. For this reason, this instrumentation technique is called \textit{runtime injection}. This approach has two main advantages: 
+Function tracing uses a form of dynamic profiling: this means that the tracing instructions can be toggled at runtime in the binary executable, without the need to recompile the code. The way this works is that, while compiling, \verb|gcc| adds extra \verb|NOP| (``No OPeration'') assembly instructions at the beginning of every function. The position of these instructions is then saved in the binary itself, so that it will be possible to change these \verb|NOP|s into something else, if needed. This is exactly what ftrace does: it toggles tracing by changing these instructions at runtime; they are converted to \verb|JMP| instructions to tracing functions, and then back to \verb|NOP| to disable tracing. For this reason, this instrumentation technique is called \textit{runtime injection}. This approach has two main advantages: 
 \begin{itemize}
     \item Since we can toggle tracing at runtime, there is zero overhead when it's disabled (so 99\% of the time).
     \item It's possible to filter what is being traced: we could dynamically activate tracing only on functions from a single subsystem, or on one function alone.
 \end{itemize}
 
-Event tracing, on the other hand, is a little different and it's less efficient than function tracing because it doesn't use runtime injection. Instead, it uses tracepoints directly in the c code, which makes it static. Tracepoints are simply direct calls to tracing function, which will gather some information through parameters and then write it in the trace output, along with the event name. Since this mechanism is static, the whole kernel must be recompiled to toggle the tracepoints: this is done by simply toggling the \verb|CONFIG_TRACEPOINTS| macro in the configuration before compiling. Let's take two scheduling events as an example: \verb|sched_stat_runtime| and \verb|sched_migrate_task|. The first happens in a specific point of the scheduler code and contains core scheduling information about a given process; the second happens upon migration of a task and contains information such as the CPU the thread was migrated to. They are called in the code like this:
+Event tracing, on the other hand, is a little different and it's less efficient than function tracing because it doesn't use runtime injection. Instead, it uses tracepoints directly in the C code, which makes it static. Tracepoints are simply direct calls to tracing function, which will gather some information through parameters and then write it in the trace output, along with the event name. Since this mechanism is static, the whole kernel must be recompiled to toggle the tracepoints: this is done by simply toggling the \verb|CONFIG_TRACEPOINTS| macro in the kernel configuration before compiling. Let's take two scheduling events as an example: \verb|sched_stat_runtime| and \verb|sched_migrate_task|. The first one happens at a specific point of the scheduler code and contains core scheduling information about a given process; the second one happens upon migration of a task and contains information such as the CPU the thread was migrated to. They are called in the code like this:
 \begin{code}
 // curtask and curr are task_structs, delta_exec is the difference in runtime since the last timer interrupt. 
 trace_sched_stat_runtime(curtask, delta_exec, curr->vruntime);
@@ -28,7 +30,7 @@ trace_sched_stat_runtime(curtask, delta_exec, curr->vruntime);
 trace_sched_migrate_task(p, new_cpu);
 \end{code}
 When these events happen, they will appear in the trace output like this:
-\begin{Verbatim}[xleftmargin=-2cm,fontsize=\footnotesize]
+\begin{Verbatim}[xleftmargin=-2cm,fontsize=\scriptsize]
 # The format is name, pid, cpu, timestamp, event name, event information 
 AudioIPC-1849  [002] 21448.743195: sched_stat_runtime:   comm=AudioIPC Callba pid=1849 runtime=104248 [ns] vruntime=3462508278368 [ns]
 AudioIPC-1849  [002] 21448.743174: sched_migrate_task:   comm=AudioIPC Client pid=26778 prio=120 orig_cpu=3 dest_cpu=0
@@ -38,31 +40,35 @@ Notice how all the information can be found through the parameters: command, pid
 
 So what do the tracing functions do, exactly? Ftrace uses a ring buffer to store all the events that are happening at runtime, so these functions will write new events in the buffer. Essentially, the producer is the kernel and the consumer is the user, which will read from user space (we will shortly see how). Because it's a circular buffer, all the old entries are overwritten if they are not read in time: this happens all the time with events because, since boot, they are written in the buffer even if nobody is reading. Another scenario in which entries are lost is when they are getting written faster than they are read: this is common when we trace every single function/event without any filters. It's generally good practice to filter as much as possible to avoid losing entries, which is possible with dynamic tracing, but not with static tracing. It's true that we can easily filter the trace output, but with static tracing the entries will be written in the buffer anyway, resulting in potential overwriting: this is why with function tracing we have true filtering, but not with event tracing.
 
+
 \section{Interfacing with ftrace}
-While tracing, the events that need to be monitored are so frequent that an extremely lightweight mechanism is needed. Ftrace offers this possibility because it's self-contained and entirely implemented in the kernel, requiring no user space tools whatsoever. We said earlier that the ftrace output, which is produced from the kernel, is read from user space: how can we read it without a specialized program? 
+Whenever tracing, the events that need to be monitored are so frequent that an extremely lightweight mechanism is needed. Ftrace offers this possibility because it's self-contained and entirely implemented in the kernel, requiring no user space tools whatsoever. As stated earlier, the ftrace output, which is produced from the kernel, is read from user space. How can we read it without a specialized program? 
 
-On Unix, system calls are not the only way to interact with the kernel. Another solution is to use a dedicated special filesystem on which the kernel and the user can easily read/write: this creates a sort of shared memory between the user and the kernel. This practice is very common on Unix-like systems such as Linux; so common, in fact, that kernel process information is (almost) always accessed like this. This is done through the \verb|procfs| filesystem, which is found in \verb|/proc|, as shown in figure \ref{img:proc}: every information about processes is stored here and it's fully accessible from user space. You can see that there is some generic information and also per-process information, with a folder for each current pid.
+On Unix, system calls are not the only way to interact with the kernel. Another solution is to use a dedicated special filesystem on which the kernel and the user can easily read/write: this creates a sort of shared memory between the user and the kernel. This practice is very common on Unix-like systems such as Linux; so common, in fact, that kernel process information is (almost) always accessed like this. This is done through the \verb|procfs| filesystem, which is found in \verb|/proc|, as shown in Figure \ref{img:proc}: every information about processes is stored here and it's fully accessible from user space. You can see that there is some generic information and also per-process information, with a folder for each current pid.
 
-\begin{figure}[ht]
-\includegraphics[width=\textwidth]{images/shell_proc.png} 
+\begin{figure}[tb]
+  \centering
+\includegraphics[width=0.9\textwidth]{images/shell_proc.png} 
 \caption{The procfs special filesystem}
 \label{img:proc}
 \end{figure}
 
-If we were to write a user application to display processes; the alternative approach to get this information would be to use a special-purpose syscall, which is what BSD and MacOS do: the syscall will return a kernel structure with all the information that needs to be parsed. The approach used by Linux is more straightforward: the information is (mostly) in human-readable form, so you simply read the files in \verb|/proc| and parse the results as strings. By doing this, you don't need to use any syscall, except, of course, \verb|open()| and \verb|read()| to interact with the filesystem. On Linux, when you use commands like \verb|ps|, \verb|top| or \verb|pgrep|, what they do internally is to query \verb|procfs|. You could always do the same operation manually by doing something like \verb%cat /proc/1337/info_that_you_need | grep specific_info%, but it would be tedious: this is why utilities like \verb|ps| are essentially front-ends for the user.
+If we were to write a user application to display processes; the alternative approach to get this information would be to use a special-purpose syscall, which is what BSD and MacOS do: the syscall will return a kernel structure with all the information that needs to be parsed. The approach used by Linux is more straightforward: the information is (mostly) in human-readable form, so you simply read the files in \verb|/proc| and parse the results as strings. By doing so, no syscall is needed, except, of course, \verb|open()| and \verb|read()| to interact with the filesystem. On Linux, commands such as \verb|ps|, \verb|top| or \verb|pgrep| are invoked,  they  internally  query the  \verb|procfs| filesystem. You could always do the same operation manually by doing something like \verb%cat /proc/1337/info_that_you_need | grep specific_info%, but it would be tedious: this is why utilities like \verb|ps| are convenient front-ends for the user.
 
-There are also other specialized filesystems, for example \verb|sysfs|, which contains system information; but what iterests us is \verb|debugfs|, which contains kernel debug information: it's here that we can interact with ftrace. This filesystem is mounted by executing \verb|mount -t debugfs nodev /sys/kernel/debug/|: since there is not an actual device that is being mounted, we use ``\verb|nodev|'' as target device; \verb|/sys/kernel/debug/| is the target mount point. In figure \ref{img:tracing} you can see the trace folder located in this filesystem. To interact with ftrace you simply write in these files with \verb|echo your_value > file|: by doing this you can toggle options and set parameters before/during the trace. 
+There are also other specialized filesystems, for example \verb|sysfs|, which contains system information; but what iterests us is \verb|debugfs|, which contains kernel debug information and allows interatcion  with ftrace. This filesystem is mounted by executing \verb|mount -t debugfs nodev /sys/kernel/debug/|: since there is not an actual device that is being mounted, we use ``\verb|nodev|'' as target device; \verb|/sys/kernel/debug/| is the target mount point. In Figure \ref{img:tracing} you can see the trace folder located in this filesystem. To interact with ftrace you simply write in these files with \verb|echo your_value > file|: by doing this you can toggle options and set parameters before/during the trace. 
 
 \begin{figure}[ht]
-\includegraphics[width=\textwidth]{images/shell_tracing.png} 
+\centering
+\includegraphics[width=0.9\textwidth]{images/shell_tracing.png} 
 \caption{Tracing folder inside the debugfs special filesystem}
 \label{img:tracing}
 \end{figure}
 
-Some of these files' purpose is not to set options, but rather to list available options. For instance, in figure \ref{img:tracers}, we list the available tracers. These are essentially tracing modes: we activate one by doing \verb|echo function > current_tracer|, which will immediately start the trace with the ``function'' tracer. We can then see the trace output by simply executing \verb|cat trace|. Most of the other files are used for filtering what is being traced, which we will see in detail in the upcoming section.
+The purpose of some of these files is not to set options. Rather, it is to list available options. For instance, in Figure~\ref{img:tracers}, the available tracers are listed. These are essentially tracing modes: we activate one by doing \verb|echo function > current_tracer|, which will immediately start to trace with the ``function'' tracer. We can then see the trace output by simply executing \verb|cat trace|. Most of the other files are used for filtering what is being traced, which we will see in detail in the upcoming section.
 
 \begin{figure}[ht]
-\includegraphics[width=\textwidth]{images/shell_tracers.png} 
+\centering
+\includegraphics[width=0.9\textwidth]{images/shell_tracers.png} 
 \caption{Types of tracers, only a few are available by default on by distribution (Debian)}
 \label{img:tracers}
 \end{figure}
@@ -229,16 +235,18 @@ The output is not the average time, but rather an unordered mix with a prevalenc
 There is also another problem with this trace. Steven Rostedt, the creator of ftrace, said in one of its articles that ``Only the leaf functions, the ones that do not call other functions, have an accurate duration, since the duration of parent functions also includes the overhead of the \verb|function_graph| tracer calling the child functions''.\cite{secrets} This means that taking the difference between the timestamp of the entry and exit point is not enough, since the overhead of ftrace is not taken into account. The same article says ``By using the \verb|set_ftrace_filter| file, you can force any function into becoming a leaf function in the \verb|function_graph| tracer, and this will allow you to see an accurate duration of that function''. If we do that we find out, more accurately, that most of the time it will take between $20 \mu s$ and $400\mu s$ to execute \verb|schedule()|.
 
 \subsection{Event tracing}
-Function tracing is very useful and will come in handy to understand the code, but now we will focus on events. You may have noticed in figure \ref{img:tracing} that there is a directory called ``events''. It contains a folder for each \textit{event subsystem}, and the one we're interested in is \verb|sched|, for the scheduling subsystem. Figure \ref{img:sched} shows its contents: there is a folder for each event, containing information about it and a switch to enable/disable it. This is essentially a list of the events that we're going to document, even though some of their names are almost self explainatory.
+Function tracing is very useful and will come in handy to understand the code, but now we will focus on events. You may have noticed in Figure \ref{img:tracing} that there is a directory called ``events''. It contains a folder for each \textit{event subsystem}, and the one we're interested in is \verb|sched|, for the scheduling subsystem. Figure \ref{img:sched} shows its contents: there is a folder for each event, containing information about it and a switch to enable/disable it. This is essentially a list of the events that we're going to document, even though some of their names are almost self explainatory.
 
 \begin{figure}[ht]
-\includegraphics[width=\textwidth]{images/shell_sched.png}
+\centering
+\includegraphics[width=0.9\textwidth]{images/shell_sched.png}
 \caption{Every event associated with scheduling}
 \label{img:sched}
 \end{figure}
 
 \begin{figure}[ht]
-\includegraphics[width=\textwidth]{images/shell_sched_event.png} 
+\centering
+\includegraphics[width=0.9\textwidth]{images/shell_sched_event.png} 
 \caption{Control files for the sched\_switch event}
 \label{img:sched_event}
 \end{figure}
@@ -269,7 +277,7 @@ The ``enable'' file is located in every folder of the event directory tree. As y
 
 The following is a small piece of a trace of every scheduling event:
 
-\begin{Verbatim}[xleftmargin=-2cm,fontsize=\footnotesize]
+\begin{Verbatim}[xleftmargin=-4cm,fontsize=\scriptsize]
 # tracer: nop
 #
 # entries-in-buffer/entries-written: 116546/459475   #P:4
@@ -296,7 +304,7 @@ As we said earlier, every information printed out in the trace is found through 
 
 \section{Creating new events}
 
-Tracepoints are created from within the kernel. At this level, events are seen as structures which carry the information needed for the event. A tracepoint must create this structure, fill it with data and write it in the ftrace ring buffer. So, this buffer is basically an array of binary data, which will be periodically consumed, decoded and printed as a string in the trace output.
+Tracepoints are created from within the kernel. At this level, events are seen as structures that carry the information needed for the event. A tracepoint must create this structure, fill it with data, and write it in the ftrace ring buffer. So, this buffer is basically an array of binary data, which will be periodically consumed, decoded and printed as a string in the trace output.
 
 Besides the core infrastructure of ftrace, its developers have also made iterfaces to make it easy for kernel developers to create tracepoints. Today, this process is almost completely automated thanks to the \verb|TRACE_EVENT()| macro and other sub-macros called by it. By using \verb|TRACE_EVENT()| it's possible to quickly create tracepoints in the core kernel code, or even in a kernel module, without much boilerplate code. Every existing tracepoint for scheduling events is created by using this macro: these tracepoints are declared in a separate, dedicated, header file, which is then included in the main code. The default path for these headers is \verb|include/trace/events|, so the declarations for the scheduling events are in \verb|include/trace/events/sched.h|. Let's see what's in this header.
 
@@ -337,18 +345,19 @@ TRACE_EVENT(sched_migrate_task,
 #include <trace/define_trace.h>
 \end{code}
 
-The whole file is basically a list of declarations like this one. This is the declaration of \verb|sched_migrate_task|, which was shown in section \ref{sec:how_does_it_work}. These weird includes at the end of the file and the special guard have something to do with how \verb|TRACE_EVENT()| works internally; we will give a brief overview of that at the end of the section. The macro itself has 6 parameters, with 5 different sub-macros:
-\begin{itemize}
+The whole file is basically a list of declarations like this one. This is the declaration of \verb|sched_migrate_task|, which was shown in Section~\ref{sec:how_does_it_work}. The \verb|#include| at the end of the file and the special guard have something to do with how \verb|TRACE_EVENT()| works internally; we will give a brief overview of that at the end of the section. The macro itself has 6 parameters, with 5 different sub-macros:
+\begin{enumerate}
     \item The first is the tracepoint name, the final name will have the format \verb|trace_NAME|.
     \item \verb|TP_PROTO| and \verb|TP_ARGS| simply define the arguments of the tracepoint
     \item \verb|TP_STRUCT__entry| defines the struct of the event, with every attribute type and name. There are 2 different sub-sub-macros to define fields and arrays.
     \item \verb|TP_fast_assign| defines how to fill the event struct, usually with the event parameters. This is not trivial because they can be filled by using other functions, macros or by \verb|memcpy()|, \verb|memmove()| etc...
     \item \verb|TP_printk| has the same syntax of \verb|printk()| and defines how to print the struct in human-readable form in the trace output. In the examples at the beginning of this section, you can see that \verb|sched_migrate_task| is printed just like that.
-\end{itemize}
+\end{enumerate}
 
-The format defined with \verb|TP_printk| can be seen from user space in the ``format'' subfolder in the event directory, as seen in figure \ref{img:sched_event_format}. \verb|TRACE_SYSTEM| is the trace system of the events, this will spawn the folder in the events directory and use it for these events: in figure \ref{img:systems} you can see the ``sched'' folder declared in the header, and its content in figure \ref{img:sched}, where there is also \verb|sched_migrate_task|. 
+The format defined with \verb|TP_printk| can be seen from user space in the ``format'' subfolder in the event directory, as seen in Figure~\ref{img:sched_event_format}. \verb|TRACE_SYSTEM| is the trace system of the events, this will spawn the folder in the events directory and use it for these events: in Figure~\ref{img:systems} you can see the ``sched'' folder declared in the header, and its content in Figure~\ref{img:sched}, where there is also \verb|sched_migrate_task|. 
 \begin{figure}[ht]
-\includegraphics[width=\textwidth]{images/shell_trace_systems.png} 
+  \centering
+\includegraphics[width=.9\textwidth]{images/shell_trace_systems.png} 
 \caption{All of the systems in which events are subdivided}
 \label{img:systems}
 \end{figure}
@@ -453,9 +462,9 @@ We can compile by linking the headers of the currently running kernel on the sys
 [  414.755236] hi! 3
 # ...
 \end{Verbatim}
-We essentially used kernel APIs defined in the included headers. \verb|for_each_process()|, \verb|for_each_thread()| and \verb|current| are all macros which are also used in the scheduler code. \verb|init_func()| is the initialization function executed upon module insertion, so when we first print the currently executing process we read \verb|insmod|. We then spawn a kernel thread which goes in a sleep state and wakes up after \verb|HZ| ticks (one second); it then prints hi and throws an event before going into sleep again. We remove the module with \verb|sudo rmmod my_module|, so \verb|exit_func()| is executed, the kthread is terminated and the module removed.
+We essentially used kernel APIs defined in the included headers. \verb|for_each_process()|, \verb|for_each_thread()| and \verb|current| are all macros which are also used in the scheduler code. \verb|init_func()| is the initialization function executed upon module insertion, so when we first print the currently executing process we read \verb|insmod|. We then spawn a kernel thread which goes in a sleep state and wakes up after \verb|HZ| ticks (one second); it then prints ``\texttt{hi}'' and throws an event before going into sleep again. We remove the module with \verb|sudo rmmod my_module|, so \verb|exit_func()| is executed, the kthread is terminated and the module removed.
 
-We said earlier that bugs in the kernel can lock the system or in the worst case corrupt your data: this is why kernel modules are usually tested in a virtual machine, and the same goes for core kernel code. For example, in our module lines 11 and 12 are important: if we comment them out, the system completely freezes after a couple of seconds upon module insertion, and then crashes. What happens is that the thread hogs the CPU, starving all other processes: it can do this without being preempted because it's a kernel thread. While kernel threads are scheduled like normal tasks, it's also true that if they don't yield the CPU voluntarily, then they can continue to execute almost indefinitely. This is due to their priority being higher than most processes running on the system.
+As stated earlier, bugs in the kernel can lock the system or in the worst case corrupt data: this is why kernel modules are usually tested in a virtual machine, and the same goes for core kernel code. For example, in our module lines 11 and 12 are important: if we comment them out, the system completely freezes after a couple of seconds upon module insertion, and then crashes. What happens is that the thread hogs the CPU, starving all other processes: it can do this without being preempted because it's a kernel thread. While kernel threads are scheduled like normal tasks, it's also true that if they don't yield the CPU voluntarily, then they can continue to execute almost indefinitely. This is due to their priority being higher than most processes running on the system.
 While hogging the CPU, messages like this can be read in the kernel log:
 \begin{Verbatim}
 [ 2795.881548] NMI watchdog: BUG: soft lockup - CPU#3 stuck for 22s! [my-kthread:2921]    

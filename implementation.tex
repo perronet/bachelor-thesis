@@ -93,7 +93,7 @@ This structure is a good reference to understand the code because it essentially
 \paragraph{mm\_struct} %TODO no code, see https://www.tldp.org/LDP/tlk/kernel/processes.html
 %kernel threads have mm at null
 %Need to explain mm_struct and some memory management (virtual memory and address spaces?)
-TODO mm switched during context switch
+\mycomment{TODO} mm switched during context switch
 
 \begin{figure}[ht]
 \includegraphics[width=\textwidth]{images/mm.jpg}
@@ -134,6 +134,7 @@ group_private=0 group_shared=0
 Here, ``\verb|se|'' is the name of the field of type \verb|sched_entity| in \verb|task_struct|.
 
 \paragraph{Red-black tree}
+\label{sec:rb-tree}
 The runnable tasks are stored inside a red-black tree, which allows more efficiency. A red-black tree is a type of self-balancing binary search tree: this means that the insertion and deletion operations will keep the height of the tree as small as possible. This characteristic is important because the cost of the most common functions (search, insertion and deletion) is proportional to the height of the tree.
 As stated before, the task to run next is the one with the smallest vruntime. In a red-black tree, this corresponds to the task in the leftmost node. When picking the next task the tree is not traversed, instead, the leftmost node is cached in a dedicated variable in order to retrieve it faster.
 
@@ -430,9 +431,10 @@ Whether the task was just created or it was woken up from sleep, his \verb|task_
     \item calls \verb|__enqueue_entity()| that insert the entity in the red-black tree representing the runqueue.
 \end{itemize}
 
-\subsubsection{schedule()}
+% TODO
+% \subsubsection{schedule()}
 
-\subsubsection{context\_switch()}
+% \subsubsection{context\_switch()}
 
 % in cfs_rq
 %     struct sched_entity	*curr;
