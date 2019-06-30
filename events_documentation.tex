@@ -138,7 +138,7 @@ Tracepoint called when the task is actually woken; $p->state == TASK\_RUNNING$. 
     \item \verb|struct task_struct *p|
 \end{itemize}
 
-\textbf{Trace output}
+\textbf{Trace output (\texttt{sched\_wakeup\_template})}
 \begin{itemize}
     \item \verb|char *comm|
     \item \verb|pid_t pid|
@@ -152,6 +152,7 @@ Tracepoint called when the task is actually woken; $p->state == TASK\_RUNNING$. 
 ./kernel/sched/core.c:1659
 \end{code}
 Mark the task runnable and perform wakeup-preemption.
+Section \ref{trace:sched_wakeup}
   
 \paragraph{\texttt{trace\_sched\_wake\_idle\_without\_ipi}}
 Tracepoint for waking a polling cpu without an IPI.
@@ -171,6 +172,8 @@ Tracepoint for waking a polling cpu without an IPI.
 
 \end{code}
 
+Called int the \verb|resched_curr| function in Section \ref{trace:wake_idle_without_ipi}.
+
 \paragraph{\texttt{trace\_sched\_waking}}
 Tracepoint called when waking a task; this tracepoint is guaranteed to be called from the waking context.
 
@@ -179,7 +182,7 @@ Tracepoint called when waking a task; this tracepoint is guaranteed to be called
     \item \verb|struct task_struct *p|
 \end{itemize}
 
-\textbf{Trace output}
+\textbf{Trace output (\texttt{sched\_wakeup\_template})}
 \begin{itemize}
     \item \verb|char *comm|
     \item \verb|pid_t pid|
@@ -198,6 +201,8 @@ try\_to\_wake\_up - wake up a thread
 \end{code}
 try\_to\_wake\_up\_local - try to wake up a local task with rq lock held
 
+Section \ref{trace:sched_waking}
+
 \paragraph{\texttt{trace\_sched\_wakeup\_new}}
 Tracepoint for waking up a new task:
 
@@ -206,7 +211,7 @@ Tracepoint for waking up a new task:
     \item \verb|struct task_struct *p|
 \end{itemize}
 
-\textbf{Trace output}
+\textbf{Trace output (\texttt{sched\_wakeup\_template})}
 \begin{itemize}
     \item \verb|char *comm|
     \item \verb|pid_t pid|
@@ -223,6 +228,8 @@ Tracepoint for waking up a new task:
 This function will do some initial scheduler statistics housekeeping
 that must be done for every newly created context, then puts the task
 on the runqueue and wakes it.
+
+Called int the \verb|| function in Section \ref{trace:sched_wakeup_new}.
    
 \paragraph{\texttt{trace\_sched\_switch}}
 Tracepoint for task switches, performed by the scheduler:
@@ -343,7 +350,7 @@ Tracepoint for accounting runtime (time the task is executing on a CPU).
 \end{code}
 
 Update the current task's runtime statistics.
-Mentioned in Section \ref{chap:ftrace}.
+Mentioned in Section \ref{chap:ftrace}. The tracepoint is located in the \verb|update_curr()| function, shown in Section \ref{trace:sched_stat_runtime}.
 
 \paragraph{\texttt{trace\_sched\_stat\_wait}}
 Tracepoint for accounting wait time (time the task is runnable but not actually running due to scheduler contention).
@@ -541,8 +548,10 @@ Tracepoint for \verb|do_fork|:
 ./kernel/fork.c:2242
 \end{code}
 \verb|_do_fork|
-    It copies the process, and if successful kick-starts                                                                                                   
-    it and waits for it to finish using the VM if required.
+It copies the process, and if successful kick-starts
+it and waits for it to finish using the VM if required.
+
+Section \ref{trace:sched_process_fork}
     
 \paragraph{\texttt{trace\_sched\_process\_hang}}
 Detect Hung Task

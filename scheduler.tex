@@ -278,14 +278,14 @@ We have defined a function that assigns a weight to each nice level. Let's see h
     \item the total weights of all the task on the run queue.
 \end{itemize}
 Given these values, the time assigned to a task is equal to: 
-\begin{equation} \label{eq:2.4}
-    assigned\_time = target\_latency * \frac{task\_weight}{total\_weight}
+\begin{equation} \label{eq:assigned_time}
+    assigned\_time = target\_latency                  \frac{task\_weight}{total\_weight}
 \end{equation}
 
 \paragraph{Virtual runtime}
 Remember that CFS tries to model an ideal multi-tasking CPU where each task runs for the same amount of time. In order to know which task deserves to be run next, every task keeps track of the total amount of time that is has spent running. The simplest solution for the scheduler would be to choose the task with the smallest total runtime. But this approach ignores the priorities of the tasks. Instead the absolute runtime of each task is weighted with the weight value discussed before. The weighted time is called the virtual runtime, abbreviated to vruntime. The general formula for calculating it is:
-\begin{equation}
-    vruntime = delta\_exec * \frac{weight\_of\_nice\_0}{task\_weight}
+\begin{equation} \label{eq:vruntime}
+    vruntime = delta\_exec \frac{weight\_of\_nice\_0}{task\_weight}
 \end{equation}
 Where \verb|delta_exec| is the absolute time that the task spent running and \verb|weight_of_nice_0|, as the name suggests, is the weight corresponding to a task with nice zero.
 
@@ -296,7 +296,7 @@ If the nice value of the task is 0, the fraction has value 1 and the virtual run
 As we said before, the goal of CFS is to be as fair as possible with all the task. This means keeping all the task's vruntime as close as possible to each other. Following this logic, the task that deserves more than anyone to be executed next, is the one with the smallest vruntime.
 %fino a qui
 
-\subsection{Adding and removing tasks from the runqueue}
+\subsection{Runqueue}
 When a task goes to sleep, it is removed from the runqueue. While sleeping, the virtual runtime of a task remains the same, while the other tasks will continue to increase their own vruntime. If the task is woken up and re-inserted into the runqueue with the same virtual runtime it had before, it would have a significantly higher priority compared to the task that remained on the runqueue: this creates a situation of unfairness, where a sleeping task gets too much priority.
 A similar situation happens with a newly created task, since it cannot simply have zero as the initial value. If that were the case, the older tasks would not get any CPU for a long time, and the new task would stay on the CPU until its virtual runtime reaches the one of the older tasks.
 

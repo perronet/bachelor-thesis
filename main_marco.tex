@@ -14,6 +14,7 @@
 \usepackage{fancyvrb}
 \usepackage{minted}
 \usepackage{hyperref}
+\usepackage{cleveref}
 % code style
 % \newminted[code]{c}{frame=single, 
 % framesep=2mm,
@@ -49,12 +50,9 @@ linenos
 % \newcommand{\mycomment}[1]{}     % per rimuovere i commenti
 
 
-\author{Marco Perronet -- Stefano Chiavazza}
+\author{Marco Perronet}
 \title{Linux Kernel: monitoring the scheduler by trace\_sched* events}
 \date{}
-
-% \author{Stefano Chiavazza}
-% \title{Linux Scheduler Internals: Resource Management via \texttt{cgroups}}
 
 
 \begin{document}
@@ -77,9 +75,6 @@ linenos
 \input{implementation.tex}
 \input{ftrace.tex}
 \input{events_documentation.tex}
-
-% Solo in tesi di Stefano
-% \input{cgroups.tex}
 
 \begin{thebibliography}{}
 \bibitem{ritchie}

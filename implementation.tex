@@ -4,7 +4,7 @@
 \section{Structs and their role}
 
 \paragraph{task\_struct}
-As mentioned in chapter \ref{ch:introduction}, each task in the system is represented \newline by a  \verb|task_struct|, which contains all the information about it. Here we list some of the fields used by the scheduler, and then cover them in detail.
+As mentioned in chapter \ref{ch:introduction}, each task in the system is represented \newline by a \verb|task_struct|, which contains all the information about it. Here we list some of the fields used by the scheduler, and then cover them in detail.
 \begin{itemize}
     \item \verb|thread_info|. This struct is architecture dependant and can contain various fields. The most important for the scheduler is the \verb|flags| field. These flags are used to keep track of requests or signals from and for the task. \verb|TIF_SIGPENDING| means that the process has pending signals, \verb|TIF_MEMDIE| means that the process is being killed to reclaim memory. In particulare, there are two flags that are crucial for the scheduler: \verb|TIF_NEED_RESCHED| and \verb|TIF_POLLING_NRFLAG|. The first indicates that scheduling must be performed, and the second that the idle process is polling the \verb|TIF_NEED_RESCHED| flag.
     %from cesati's book
@@ -17,6 +17,7 @@ As mentioned in chapter \ref{ch:introduction}, each task in the system is repres
 \end{itemize}
 
 \paragraph{thread\_info}
+\label{sec:thread_info}
 This structure is very small and contains only basic information useful for scheduling, and each process has its own \verb|thread_info|. In figure \ref{img:stack} from chapter \ref{ch:introduction} it is shown that this struct is located at the bottom of kernel stacks. The small size of this struct is due to the fact that it has to fit in the small kernel stacks while not occupying too much space. Today, the implementation of \verb|thread_info| has changed: it is now embedded directly in \verb|task_struct|. 
 
 \begin{code}
@@ -30,12 +31,16 @@ struct task_struct {
 #endif
 // ...
 \end{code}
-With the previous implementation, \verb|thread_info| and \verb|task_struct| referenced each other through pointers. As shown in this code, if \verb|CONFIG_THREAD_INFO_IN_TASK| is defined, the field is not a pointer. With this new implementation, \verb|thread_info| is not located in the kernel stack. In order to access it, a pointer to the current task's \verb|thread_info| is saved, and its \verb|task_struct| can be accessed with the ``\verb|container_of()|'' trick discussed in chapter \ref{ch:introduction}. The implementation is very architecture dependent and this is specific to x86.
+With the previous implementation, \verb|thread_info| and \verb|task_struct| referenced each other through pointers. As shown in this code, if \verb|CONFIG_THREAD_INFO_IN_TASK| is defined, the field is not a pointer. With this new implementation, \verb|thread_info| is not located in the kernel stack. In order to access it, a pointer to the current task's \verb|thread_info| is saved, and its \verb|task_struct| can be accessed with the ``\verb|container_of()| trick'' discussed in chapter \ref{ch:introduction}. 
 
-%TODO kernel preemption and user preemption, returning to user space (entry.S which defines entry and exit instruction)
-%arch/x86/entry/entry_64.S explain kernel preemption e user preemption
-
-%TODO explain TIF_NEED_RESCHED briefly (see cesati?)
+The implementation of this struct is very architecture dependent. This one is specific to x86:
+\begin{code}
+struct thread_info {
+	unsigned long   flags;  /* low level flags */
+	u32 status;             /* thread synchronous flags */
+};
+\end{code}
+The flags field is crucial, because it is here that the \verb|TIF_NEED_RESCHED| flag is set, allowing the scheduler to be invoked. In practice, there are pieces of code that are executed each time a task enters/exits kernel space. In particular, when returning to user space, each task will execute the \textit{userspace return path}, defined in assembly in \verb|./arch/x86/entry_64.S|. This code checks the \verb|TIF_NEED_RESCHED| flag, and if set will call the \verb|schedule()| routine. We said earlier that the scheduler code is executed by any user process that was going to return to user space: this is the exact point in the kernel where it happens.
 
 \paragraph{sched\_entity}
 The \verb|sched_entity| struct represent a \textit{schedulable entity}. From the scheduler's perspective, there is no difference between a process, a thread or even a whole group of processes: they are all just schedulable entities represented by this struct, and scheduler is oblivious to their real nature. Because of this, the scheduler works only with schedulable entities and not \verb|task_struct|s. For example, runqueues contain schedulable entities. 
@@ -57,6 +62,7 @@ The most important fields that compose \verb|sched_entity| are:
 These fields are specific to CFS, where the runqueue is a red-black tree (\verb|rb_node| and \verb|cfs_rq|), and the timeslice is based on virtual runtime (\verb|exec_start| and \verb|sum_exec_runtime| are used to calculate vruntime). The other scheduling class have their own entity, such as \verb|sched_rt_entity| and \verb|sched_dl_entity|, defining its specific fields. \verb|sched_entity| is not called \verb|sched_fair_entity| supposedly because the fair class is the default. 
 
 \paragraph{sched\_class}
+\label{sec:sched_class}
 This structure contains function pointers to the scheduler routines, specific to the scheduling class. Each class has routines that do the same thing, but with different implementations.
 
 \begin{code}
@@ -138,36 +144,41 @@ Here, ``\verb|se|'' is the name of the field of type \verb|sched_entity| in \ver
 The runnable tasks are stored inside a red-black tree, which allows more efficiency. A red-black tree is a type of self-balancing binary search tree: this means that the insertion and deletion operations will keep the height of the tree as small as possible. This characteristic is important because the cost of the most common functions (search, insertion and deletion) is proportional to the height of the tree.
 As stated before, the task to run next is the one with the smallest vruntime. In a red-black tree, this corresponds to the task in the leftmost node. When picking the next task the tree is not traversed, instead, the leftmost node is cached in a dedicated variable in order to retrieve it faster.
 
-\section{Time keeping}%correggi da qui
+\section{Time keeping}
 \label{sec:timekeeping}
-Many functions of the kernel need to keep track of the passing of the time. The scheduler, for example, needs to know for how long a task has been running in order to know when to preempt it and give the control of the CPU to another task. But there are many other functions that are time-driven, so it's important to understand how the system keeps track of the time.
+The kernel must keep track of time. The scheduler, for example, needs to know for how long a task has been running in order to know when to preempt it. There are many other functions that are time-driven, so it's important to understand how the system keeps track of the time.
 
-The kernel requires an hardware timer to manage the passing of time. This timer can be implemented in different ways and there can be more timers in a system, but the general idea is the same: the timer sends an interrupt at a fixed frequency known by the kernel, this way it also knows the time between two timer interrupts and can perform periodic actions such as updating the system uptime. The period between two interrupt is called a \textit{tick} and the frequency is called \textit{tick rate}, this value inside the kernel is defined as \textbf{HZ}. If the value of HZ is 100, it means that the frequency is 100HZ and there is a tick every $1/100$ seconds, or 10 milliseconds.
+To do this, the kernel requires an hardware timer. This timer can be implemented in different ways and there can be more timers in a system, but the general idea is the same: the timer sends an interrupt at a fixed frequency known by the kernel. This way, it's possible to get the time between two timer interrupts and perform periodic actions such as updating the system uptime. The period between two interrupts is a unit of measure called \textit{tick}, while the frequency is called \textit{tick rate}; this value is internally defined as the constant \texttt{HZ}. If the value of \texttt{HZ} is 100, there are 100 ticks per second, or one tick each 10 milliseconds.
 
 \subsubsection{Choice of the tick rate}
-As we will see later, many parts of the system are time-dependant, so they rely on the timer interrupt. Changing the frequency of the interrupt can have a large impact on the behavior of the system, there are pros and cons to larger an smaller values oh HZ.
+Changing the frequency of the timer interrupt can have a large impact on the behavior of the system, so there are pros and cons to larger or smaller values of \texttt{HZ}.
 
 %pros of larger HZ
-A larger HZ means that the timer interrupt has a finer resolution, which means that all the timed events also have a higher resolution and also allows to improve the accuracy of those events. As an example, let's consider process preemption, with an higher tick rate we can improve the accuracy and reduce the scheduling latency. Suppose that a process has 2 milliseconds left of its timeslice and the timer interrupt has just occurred, with an HZ of 100 the next interrupt will occur in 10 milliseconds, giving the process 8 extra milliseconds, it also means that another task has to wait for more time in the runqueue and this can be an issue for time-sensitive tasks. With a larger HZ, 1000 for example, in the worst case scenario, the latency is only 1 millisecond.
+A larger \texttt{HZ} means that the timer interrupt has a finer granularity: this means that all the timed events also have a higher resolution, which allows to improve their accuracy. As an example, let's consider process preemption: with an higher tick rate we can improve the accuracy and reduce the scheduling latency. Suppose that a process has 2 milliseconds left of its timeslice and the timer interrupt has just occurred. With an \texttt{HZ} of 100 the next interrupt will occur in 10 milliseconds, giving the process 8 extra milliseconds. This means that another task has to wait for more time in the runqueue, and this can be an issue for time-sensitive tasks. With a larger \texttt{HZ}, for example 1000, in the worst case scenario the latency is only 1 millisecond.
 
 %cons of larger HZ
-There is also a drawback to increasing the tick rate: the interrupt handler gets executed more often and results in less processor time for the tasks. The actual impact of the increased overhead is debatable and depends on the speed of the processor.
+There is also a drawback to increasing the tick rate: the interrupt handler gets executed more often, and this results in less processor time for the tasks. The actual impact of the increased overhead is debatable and depends heavily on the speed of the processor.
 
 %different values of HZ
-The value of HZ depends on the hardware and on the configuration of the machine. On i386 HZ had a value of 100, with linux version 2.6 the value was raised to 1000 and later was made a configurable parameter and the default became 250. With the time were also introduced other, more accurate, timers, making an high HZ less necessary. It is also possible to configure the kernel as \textit{tickless} (NO\_HZ), this means that the interrupt is no longer at fixed intervals, but it's dynamically scheduled as needed, which is helpful for power savings.
+The value of \texttt{HZ} depends on hardware and on the kernel configuration. On i386 \texttt{HZ} had a value of 100, with Linux version 2.6 the value was raised to 1000 and later was made a configurable parameter, with a default of 250. There were also introduced other, more accurate and \texttt{HZ}-independent, timers called \textit{high resolution timers} (HRT), making a high \texttt{HZ} less necessary. It is also possible to configure the kernel as \textit{tickless} (\verb|NO_HZ|): this means that the interrupt is no longer at fixed intervals, but it's dynamically scheduled as needed, which is helpful for power saving.
 
 \subsubsection{Jiffies}
 %What is jiffies
-\textit{Jiffies} is the number of ticks that have occurred since the system started, very time that the interrupt handler is executed, the value of \textit{jiffies} is increased by one. This means that if we know the value of HZ and the value of jiffies we can theoretically convert from seconds to jiffies, simply by doing \verb|seconds * HZ| and from jiffies to seconds with: jiffies / HZ
-%TODO: code for conversion here
-%add more about implementation
+``\textit{Jiffies}'' is the number of ticks that have occurred since the system started. Every time that the interrupt handler is executed, the value of jiffies is increased by one. This means that with the value of \texttt{HZ}, and the value of jiffies, we can easily convert from seconds to jiffies by doing \verb|seconds * HZ| and from jiffies to seconds with \verb|jiffies / HZ|.
+\begin{code}
+// ./kernel/sched/sched.h
+/*
+ * Helpers for converting nanosecond timing to jiffy resolution
+ */
+#define NS_TO_JIFFIES(TIME) ((unsigned long)(TIME) / (NSEC_PER_SEC / HZ))
+\end{code}
 
 \paragraph{sched\_clock()}
 \label{sched_clock}
-An important function of the kernel is \verb|sched_clock()|, it returns the system's uptime in nanoseconds. An architecture may provide an implementation, but if it is not provided, the system will use the jiffies counter to calculate the system's uptime.
+An important function is \verb|sched_clock()|: it returns the system's uptime in nanoseconds. An architecture may provide an implementation, but if it is not provided, the system will use the jiffies counter to calculate the system's uptime.
 
-The scheduler uses this function to determine the absolute time that the current task has been running. If the system uses the jiffies counter to determine this value the maximum resolution of \verb|sched_clock()| depends on the value of HZ. In this case the choice of HZ becomes more relevant.
-The default implementation of \verb|sched_clock()| using jiffies is this:
+The scheduler uses this function to determine the absolute, non-weighted, time that the current task has been running (\verb|se->runtime|). If the system uses the jiffies counter to determine this value, the maximum resolution of \verb|sched_clock()| depends on \texttt{HZ}. In this case the choice of \texttt{HZ} becomes more relevant.
+The following is the default implementation of \verb|sched_clock()| when using only jiffies:
 \begin{code}
 unsigned long long __weak sched_clock(void)
 {
@@ -176,11 +187,12 @@ unsigned long long __weak sched_clock(void)
 }
 \end{code}
 
-\subsubsection{Interrupt Handler}
+\subsubsection{Timer interrupt handler}
 
-As we said before, the interrupt handler gets called at fixed intervals (unless configured with NO\_HZ). The handler perform many important functions, some of this actions depend on the architecture of the system, but some are independent and are executed by the \verb|periodic_tick()| function (in \verb|kernel/time/tick_common.c|):
+The timer interrupt handler invokes other functions, some of which are architecture dependent. The other, architecture independent, timer functions are executed by \verb|tick_periodic()|, which is called by the handler.
 
 \begin{code}
+// ./kernel/time/tick-common.c
 static void tick_periodic(int cpu)
 {
 	if (tick_do_timer_cpu == cpu) {
@@ -198,29 +210,71 @@ static void tick_periodic(int cpu)
 	profile_tick(CPU_PROFILING);
 }
 \end{code}
-The two most important functions here are \verb|do_timer(1)| and \verb|update_process_times|. The first one increments the value of jiffies and updates the load statistics for the system.
+The two most important functions here are \verb|do_timer()| and \verb|update_process_times()|. The first one increments the value of jiffies and updates the load statistics for the system. The second updates various statistics and the runtime of the current task: if the task has finished its timeslice, it will prompt a reschedule. %TIF_NEED_RESCHED?
 
-The second is the most important for the scheduler, it updates various statistics and updates the runtime of the current task, if the task has finished its timeslice, it prompts a reschedule. We will see later in more detail how this works.
+\begin{code}
+// ./kernel/time/tick-common.c
+/*
+ * Must hold jiffies_lock
+ */
+void do_timer(unsigned long ticks)
+{
+	jiffies_64 += ticks;
+	calc_global_load(ticks);
+}
+\end{code}
 
 \subsubsection{update\_process\_times()}
-This function updates the time that the current process has been running, the process changes if the process was running in user mode or in kernel mode. Remember that \verb|task_struct| has two different fields \verb|utime| and \verb|stime| to keep track of time spent in user space and in kernel space respectively.
+This function updates the time that the current process has been running. The procedure changes if the process was running in user mode or in kernel mode. Remember that \verb|task_struct| has two different fields \verb|utime| and \verb|stime| to keep track of time spent in user space and in kernel space respectively. This function also invokes the \verb|scheduler_tick| function, which is the entry point that calls all the scheduler routines.
 
-The other important thing this function does is invoking the \verb|scheduler_tick| function.
+\begin{code}
+// ./kernel/time/timer.c
+/*
+ * Called from the timer interrupt handler to charge one tick to the current
+ * process.  user_tick is 1 if the tick is user time, 0 for system.
+ */
+void update_process_times(int user_tick)
+{
+	struct task_struct *p = current;
+
+	/* Note: this timer irq context must be accounted for as well. */
+	account_process_tick(p, user_tick);
+	run_local_timers();
+	rcu_check_callbacks(user_tick);
+#ifdef CONFIG_IRQ_WORK
+	if (in_irq())
+		irq_work_tick();
+#endif
+	scheduler_tick();
+	if (IS_ENABLED(CONFIG_POSIX_TIMERS))
+		run_posix_cpu_timers(p);
+}
+\end{code}
 
 \section{Scheduler routines}
+There are essentially two ways of prompting a reschedule:
+\begin{itemize}
+    \item When the timeslice of the current process expires. When this occurs, the \verb|TIF_NEED_RESCHED|
+    flag in the \verb|thread_info| structure of the current process is set, so the scheduler is
+    invoked when the timer interrupt handler terminates.\cite{cesati} This rescheduling possibility is checked periodically, at each system tick.
+    \item When a task is added to the runqueue. When it happens, the kernel checks whether its dynamic priority is
+    greater than the priority of the currently running process. If it is, the execution of
+    current is interrupted and the scheduler is invoked to select another process to run
+    (usually the process that just became runnable).\cite{cesati} This rescheduling possibility is checked every time that a task is created or woken up.
+\end{itemize}
+The internal working of these two procedures are illustrated, in order, in the two upcoming sections.
 
-We will now analyze in more detail how the scheduling works and the most important functions involved. In the last section we saw how the system can perform periodic functions at fixed intervals to measure the passing time.
+\subsection{Periodic reschedule}
+We will now analyze in detail how scheduling works and the most important functions involved. In the last section, we saw how the system can perform periodic functions in order to measure time. From the entry point \verb|scheduler_tick()|, the subsequent calls can be traced with \verb|ftrace|: a function/event tracer embedded in the kernel.
 
-%If there are events in the fuction, explain them in the FTRACE section
-%show trace starting from the timer interrupt, using function_graph tracer
-Path that \verb|schedule()| takes. TODO
+The following script can trace function calls of any input kernel function. Function tracing with \verb|ftrace| is explained in detail in Chapter \ref{chap:ftrace}. For now, it is enough to know that this script simply sets \verb|ftrace| parameters before starting the trace. 
 \begin{codebash}
 #!/bin/bash
 echo function_graph > /sys/kernel/debug/tracing/current_tracer
 # removing noise to see just the actual function trace
-#trace on cpu0 only (actually disables tracing on other cpus)
+# trace on cpu0 only (actually disables tracing on other cpus)
 echo 1 > /sys/kernel/debug/tracing/tracing_cpumask 
-#show comments on all exit points
+# show comments on all exit points
 echo funcgraph-tail > /sys/kernel/debug/tracing/trace_options 
 # function to trace
 echo $* > /sys/kernel/debug/tracing/set_graph_function
@@ -230,14 +284,18 @@ sleep 3
 cat /sys/kernel/debug/tracing/trace
 \end{codebash}
 
+%show trace starting from the timer interrupt, using function_graph tracer
+%also scheduler_tick()?
+Path that \verb|schedule()| takes. TODO
 \begin{Verbatim}
 selected schedule() calls from the script here
 \end{Verbatim}
 
-\subsection{scheduler\_tick()}
-As we mentioned in the previous section the \verb|scheuler_tick()|  function is called by the interrupt handler at every tick, this means that it is called with a frequency of HZ.
+\subsubsection{scheduler\_tick()}
+As stated earlier, this function is called by the interrupt handler at every system tick.
 
 \begin{code}
+// ./kernel/sched/core.c
 void scheduler_tick(void)
 {
 	int cpu = smp_processor_id();
@@ -265,20 +323,18 @@ void scheduler_tick(void)
 #endif
 }
 \end{code}
+The first important function here is \verb|sched_clock_tick()|. This function updates the per-CPU \verb|sched_clock_data| struct. To update this time, it uses the \verb|sched_clock()| function discussed earlier.
 
-The first important function here is \verb|sched_clock_tick()|, this function updates the per-CPU \verb|sched_clock_data| struct. To update this time, it uses the \verb|sched_clock()| function discussed in the section before \ref{sched_clock}.
+\verb|update_rq_clock()| updates the \verb|clock_task| field inside the runqueue of the current CPU (\verb|cpu_rq(cpu)|). This is used later by \verb|update_curr()|, a function that updates the \verb|task_struct| of the currently running process (stats, vruntime, runtime\dots).
 
-The \verb|sched_rq_clock()| updates the \verb|clock_task| field inside the \verb|task_stuct|, this is used later by \verb|update_curr()|.
-
-It then invokes the \verb|task_tick| function for the current task that is running to update the statistics of the task. This action depends on the scheduling class that the current process is using. We will now see how the \verb|fair_sched_class| works.
+Then, on line 14, \verb|task_tick()| is invoked for the current task to update its statistics. This action depends on the scheduling class that the current process is using. As shown in Section \ref{sec:sched_class}, \verb|sched_class| contains hooks to the correct functions for each scheduling class. Suppose that the current task has the fair class, then \verb|task_tick_fair()| would be executed on this line.
 
 \subsubsection{task\_tick\_fair}
 
-The runtime statistics for the current process are stored in the \verb|sched_entity| associated with it. The scheduler updates its parameters and then check if the current task is to be rescheduled. 
+The runtime statistics for the current process are stored in the \verb|sched_entity| associated with it. The scheduler updates its parameters and then checks if the current task is to be rescheduled. 
 
-Remember that entities can organized in hierarchies.
-We can now analyze the \verb|task_tick_fair| function:
 \begin{code}
+// ./kernel/sched/fair.c
 static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
 {
 	struct cfs_rq *cfs_rq;
@@ -295,21 +351,67 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
 	update_misfit_status(curr, rq);
 }
 \end{code}
+This function fetches the \verb|sched_entity| of the current process. This is going to be a leaf of the hierarchy, and if the task isn't part of a group, it is also the root. Remember that the \verb|sched_entity| struct points to two runqueues: \verb|cfs_rq| and \verb|my_q|. The first is the runqueue on which the entity is scheduled, the second is the runqueue that belongs to that group. When the entity is a leaf, the second field is empty. 
 
-This function fetches the \verb|sched_entity| of the current process running, this is going to be a leaf of the hierarchy, and, if the task isn't part of a group, it is also the root. Remember that the \verb|sched_entity| struct point to two runqueues: \verb|cfs_rq| and \verb|my_q|, the first is the runqueue on which the entity is scheduled, the second is the runqueue that belongs to that group. When the entity is a leaf the second field is empty. 
-
-For each entity in the hierarchy starting from the leaf, it calls:
+For each entity in the hierarchy starting from the leaf, the function calls:
 \begin{itemize}
-    \item \verb|cfs_rq_of(se)|, which returns the runqueue on which the entity is scheduled, if the system is configured without group scheduling there is only one runqueue.
+    \item \verb|cfs_rq_of(se)|. This returns the runqueue on which the entity is scheduled. If the system is configured without group scheduling there is only one runqueue.
     
-    \item then \verb|entity_tick(cfs_rq, se, queued)|, which updates the statistics of that entity and checks if it has finished its time and if another entity deserves to run. This means that if a process inside a group still deserves more time, but the entire group has finished its time and another group deserves the CPU, the task is preempted anyway. \verb|entity_tick| also updates the load statistics used to balance the load between CPUs.
+    \item \verb|entity_tick(cfs_rq, se, queued)|. This updates the statistics of that entity, then checks if it has finished its time and if another entity deserves to run. This means that:
+    \begin{enumerate}
+        \item If a process inside a group still deserves more time
+        \item but the entire group has finished its time
+        \item and another group deserves the CPU
+    \end{enumerate}
+    Then the task is preempted anyway. \verb|entity_tick()| also updates the load statistics used to balance the load between CPUs.
 \end{itemize}
 
-\subsubsection{update\_curr()}
-
-The first part of \verb|entity_tick()|'s job, updating the runtime statistics, it's done by the function \verb|update_curr()|. This function takes as argument only the runqueue on which the current task is running, returned by: \verb|cfs_rq_of(se)|. From the runqueue it gets the \verb|sched_entity| of the current task running. It also gets the current time from the runqueue's clock.
-
+\subsubsection{entity\_tick}
 \begin{code}
+// ./kernel/sched/fair.c
+static void
+entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
+{
+	/*
+	 * Update run-time statistics of the 'current'.
+	 */
+	update_curr(cfs_rq);
+
+	/*
+	 * Ensure that runnable average is periodically updated.
+	 */
+	update_load_avg(cfs_rq, curr, UPDATE_TG);
+	update_cfs_group(curr);
+
+#ifdef CONFIG_SCHED_HRTICK
+	/*
+	 * queued ticks are scheduled to match the slice, so don't bother
+	 * validating it and just reschedule.
+	 */
+	if (queued) {
+		resched_curr(rq_of(cfs_rq));
+		return;
+	}
+	/*
+	 * don't let the period tick interfere with the hrtick preemption
+	 */
+	if (!sched_feat(DOUBLE_TICK) &&
+			hrtimer_active(&rq_of(cfs_rq)->hrtick_timer))
+		return;
+#endif
+
+	if (cfs_rq->nr_running > 1)
+		check_preempt_tick(cfs_rq, curr);
+}
+\end{code}
+\subsubsection{update\_curr}
+\label{sec:update_curr}
+
+The first part of \verb|entity_tick()|'s job, updating the runtime statistics, is done by \verb|update_curr()|. This function takes as argument only the runqueue on which the current task is running. From the runqueue, it gets the \verb|sched_entity| of the current task. It also gets the current time from the runqueue's clock, previously updated through \verb|update_rq_clock()|.
+
+\label{trace:sched_stat_runtime}
+\begin{code}
+// ./kernel/sched/fair.c
 static void update_curr(struct cfs_rq *cfs_rq)
 {
 	struct sched_entity *curr = cfs_rq->curr;
@@ -345,48 +447,110 @@ static void update_curr(struct cfs_rq *cfs_rq)
 	account_cfs_rq_runtime(cfs_rq, delta_exec);
 }
 \end{code}
-
 \verb|curr->exec_start| is the time at which the entity was selected by the scheduler to be executed. %pick_next_entity()->set_next_entity()->update_stats_curr_start()
-We can calculate \verb|delta_exec|, the amount of time that the task has spent running, simply by subtracting \verb|exec_start| from the current time, this value is then used to update the total runtime of the entity (can correspond to a group or a task) and the longest execution.
+We can calculate \verb|delta_exec|, the amount of time that the task has spent running, simply by subtracting \verb|exec_start| from the current time. \verb|exec_start| is then reset to the current time. \verb|delta_exec| is used to update the total \textbf{actual} runtime of the entity (\verb|sum_exec_runtime|). Other statistics are also updated, such as the longest execution so far (\verb|statistics.exec_max|).
 
-The virtual runtime is calculated by \newline \verb|__calc_delta(delta, NICE_0_LOAD, &se->load);|. %explain
-
+The virtual runtime is the total runtime weighted. The weighted delta is calculated on line 22 by \verb|calc_delta_fair()|, and the virtual runtime is updated.
 If the newly calculated vruntime is also the smallest in the runqueue, the field \verb|cfs_rq->min_vruntime()| is updated.
+\verb|update_curr()| also triggers the trace event \verb|sched_stat_runtime|: this event signals when a process' virtual runtime is updated.
 
-\verb|update_curr()| also triggers the event \verb|sched_stat_runtime|\label{trace:sched_stat_runtime}, this event signals when a process's virtual runtime is updated.
+It is also possible that a group of tasks has a limit on the amount of CPU it can use. The function \verb|account_cfs_rq_runtime| is specific for groups. It updates \verb|cfs_rq->remaining_runtime|, where \verb|cfs_rq| is, again, the runqueue of the current group; then it triggers a reschedule if the remaining time reaches zero.
 
-It is also possible that a group of tasks has a limit on the amount of CPU it can use. The function \verb|account_cfs_rq_runtime| updates \newline \verb|cfs_rq->remaining_runtime|, where \verb|cfs_rq| is, again, the runqueue of the current group, and also triggers a reschedule if the remaining time reaches zero.
+\subsubsection{calc\_delta\_fair}TODO
+equation \ref{eq:vruntime}
+\begin{code}
+__calc_delta(delta, NICE_0_LOAD, &se->load);
+\end{code}
+\subsubsection{check\_preempt\_tick} %TODO
 
-\subsubsection{check\_preempt\_tick()}
+\verb|check_preempt_tick()| is called at the end of \verb|entity_tick()|, after all the fields of the current process have been updated with \verb|update_curr()|. Its job is to check if the current task has to be preempted. 
+\begin{code}
+// ./kernel/sched/fair.c
+/*
+ * Preempt the current task with a newly woken task if needed:
+ */
+static void
+check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
+{
+	unsigned long ideal_runtime, delta_exec;
+	struct sched_entity *se;
+	s64 delta;
 
-The job of \verb|check_preempt_tick()| is to check if the current task has to be preempted. The first step is calculating \verb|ideal_runtime|, as the name suggests, this is the time that is assigned to the task. It's calculated by \newline \verb|__calc_delta(slice, se->load.weight, load)| where the first argument is the target latency, the second is the weight of the entity and the third is the total load of the current runqueue. This function calculates the \verb|assigned_time| of formula \ref{eq:2.4}.
+	ideal_runtime = sched_slice(cfs_rq, curr);
+	delta_exec = curr->sum_exec_runtime - curr->prev_sum_exec_runtime;
+	if (delta_exec > ideal_runtime) {
+		resched_curr(rq_of(cfs_rq));
+		/*
+		 * The current task ran long enough, ensure it doesn't get
+		 * re-elected due to buddy favours.
+		 */
+		clear_buddies(cfs_rq, curr);
+		return;
+	}
 
-If the task has run for more than the ideal runtime, the function \verb|resched_curr()| is called and it will cause the preemption of the task.
+	/*
+	 * Ensure that a task that missed wakeup preemption by a
+	 * narrow margin doesn't have to wait for a full slice.
+	 * This also mitigates buddy induced latencies under load.
+	 */
+	if (delta_exec < sysctl_sched_min_granularity)
+		return;
 
-The other way it can trigger a reschedule is if the difference between the virtual runtime of the current task and the smallest virtual runtime in the runqueue is bigger than the ideal runtime.
+	se = __pick_first_entity(cfs_rq);
+	delta = curr->vruntime - se->vruntime;
+
+	if (delta < 0)
+		return;
+
+	if (delta > ideal_runtime)
+		resched_curr(rq_of(cfs_rq));
+}
+\end{code}
+%TODO The  scheduler  has  a  tunable  parameter  called sysctl_sched_min_granularity
+The first step is calculating \verb|ideal_runtime|. As the name suggests, this is the timeslice assigned to the task: remember that CFS's timeslice always varies dynamically with vruntime. \verb|sched_slice()| internally calculates \newline \verb|__calc_delta(slice, se->load.weight, load)| where the first argument is the target latency, the second is the weight of the entity and the third is the total load of the current runqueue. This function calculates the \verb|assigned_time| of equation \ref{eq:assigned_time}.
+
+If the task has run for more than the ideal runtime, the function \verb|resched_curr()| is called and it will cause the preemption of the task. The other way this function can trigger a reschedule, is if the difference between the virtual runtime of the current task and the smallest virtual runtime in the runqueue is bigger than the ideal runtime.
 %what is the difference between the 2 cases? just the buddies?
 
-\paragraph{resched\_curr()}\label{resched_curr}
-This function simply sets the \verb|TIF_NEED_RESCHED| which indicates that the current task needs to be rescheduled. When resuming the execution of a user process, the flag is check and if it is set, the schedule function is called, this will select the next task to run.
-%explain wake_idle_without_ipi and when it is called
+\paragraph{resched\_curr}\label{trace:wake_idle_without_ipi}
+Finally, this function sets the \verb|TIF_NEED_RESCHED| flag, located in the flags field of the struct \verb|thread_info| (Section \ref{sec:thread_info}). 
+This flag indicates that the current task needs to be rescheduled. When resuming the execution of a user process, the flag is checked and if it is set, the schedule function is called.
 
-\subsection{Adding a task to the runqueue}
-
-A task can be added to the runqueue in 2 cases: when it is created, when it is woken up after sleeping.
-
-Let's start by describing what happens when a new task is created via the \verb|fork()| system call.
+\subsection{Reschedule when adding a task to the runqueue}
+A task can be added to the runqueue in 2 cases: when it is created, and when it is woken up. The reason why it's important to reschedule upon creation/wakeup is interactivity. If the newly added process has less weight than the running task, then it is scheduled. For example, if we pressed a button on a text editor, we expect its process to wake up and be rescheduled immediately in order to respond to the key press. In practice, the reschedule would often take place because the text editor's vruntime is very small. Moreover, after having responded to the key press, it will go back to sleep, keeping his vruntime to a minimum.
+%CFS intuition here
 
 \subsubsection{A new process is created}
-When a process calls \verb|fork()| its \verb|task_struct| is duplicated and a new process is started. This is done by the \verb|_do_fork()| function that also triggers the \verb|sched_process_fork|\label{trace:sched_process_fork} event. It then calls the function \verb|wake_up_new_task()| that takes as argument the newly created \verb|task_struct|.
+When a process calls \verb|fork()| its \verb|task_struct| is duplicated and a new process is started. This is done by the \verb|_do_fork()| handler that also triggers the \verb|trace_sched_process_fork|\label{trace:sched_process_fork} event. It then calls \verb|wake_up_new_task()| that takes as argument the newly created \verb|task_struct|. 
 
-This function sets the state of the task as \verb|TASK_RUNNING|, then, after initiating some values used for scheduling statistics, invokes the \verb|activate_task()| function that will proceed in activating the task. After the task has been activated and placed on the runqueue, \verb|wake_up_new_task| triggers the \verb|sched_wakeup_new| \label{trace:sched_wakeup_new} event. Lastly this function calls \verb|check_preempt_curr()| that has the job of preempting the current task if another is more deserving. 
+This function sets the state of the task as \verb|TASK_RUNNING|, then, after initiating some values used for scheduling statistics, invokes \verb|activate_task()|. After the task has been activated and placed on the runqueue, \verb|wake_up_new_task| triggers the \verb|sched_wakeup_new| \label{trace:sched_wakeup_new} event. Lastly, this function calls \verb|check_preempt_curr()|, which will preempt the current task if another is more deserving. 
 
-\paragraph{check\_preempt\_curr()}\label{check_preempt_curr}
-This function compares the newly created task with the one currently running. The first thing it has to check is the scheduling class. A task of a lower priority scheduling class cannot preempt one of an higher class. On the other hand if the new task has an higher priority, the \verb|resched_curr()| function is called that will cause the task to be rescheduled.
+\paragraph{check\_preempt\_curr}\label{check_preempt_curr}
+This function has a name that is very similar to\\ \verb|check_preept_tick|. It also has a similar function, but unlike \verb|check_preept_tick|, it is not periodic.
+This function compares the newly created task with the one currently running. The first thing it has to check is the scheduling class: a task of a lower priority class cannot preempt one of an higher class. On the other hand, if the new task has an higher priority, the \verb|resched_curr()| function is called, causing a reschedule.
+\begin{code}
+void check_preempt_curr(struct rq *rq, struct task_struct *p, int flags)
+{
+	const struct sched_class *class;
 
-When the two tasks have the same scheduling class, the decision depends on the class. If they use the \verb|fair_sched_class| the \newline \verb|check_preempt_wakeup()| function in \verb|fair.c| is called.
+	if (p->sched_class == rq->curr->sched_class) {
+		rq->curr->sched_class->check_preempt_curr(rq, p, flags);
+	} else {
+		for_each_class(class) {
+			if (class == rq->curr->sched_class)
+				break;
+			if (class == p->sched_class) {
+				resched_curr(rq);
+				break;
+			}
+		}
+	}
+	// ...
+}
+\end{code}
+When the two tasks have the same scheduling class, the decision depends on the class, and the correct hook is invoked through \verb|sched_class|. If they use the \verb|fair_sched_class|, the \verb|check_preempt_wakeup()| function in \verb|fair.c| is called.
 
-If the current task's policy is \verb|SCHED_IDLE| and the new task has a different policy, then the old task is preempted. Also, a batch or an idle task cannot preempt a non-idle task. If the tasks have the same policy, the virtual runtime of the current task is updated and then compared with the virtual runtime of the new task.
+In this function, if the current task's policy is \verb|SCHED_IDLE| and the new task has a different policy, then the old task is preempted. Also, a batch or an idle task cannot preempt a non-idle task. If the tasks have the same policy, the virtual runtime of the current task is updated and then compared with the virtual runtime of the new task. This is done through this funciton:
 
 \begin{code}
 static int
@@ -404,40 +568,32 @@ wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se)
 	return 0;
 }
 \end{code}
-
 If the current task has a smaller virtual runtime than the new one, the task is not preempted. Otherwise it is preempted if the difference between the virtual runtimes is big enough. This is done to avoid too frequent rescheduling. 
 
-The scheduler has a tunable parameter called \verb|wakeup_granularity| that controls the minimum difference necessary to preempt the task. This value is not directly used, instead it's first weighted by the weight of the new task with the \verb|calc_delta_fair()| function.  This is the same function used to calculate the virtual runtime. The new task is used, instead of the current one, because this penalizes tasks with smaller weights:
+The scheduler has a tunable parameter called \verb|wakeup_granularity| that controls the minimum difference necessary to preempt the task (``big enough''). This value is not directly used, but instead, it's first weighted by the weight of the new task with \verb|calc_delta_fair()|. This is the same function used to calculate the virtual runtime. The new task is used, instead of the current one, because this penalizes tasks with smaller weights:
 \begin{itemize}
-    \item if the new task has a smaller weight than the current one, then the corresponding weighted granularity will be larger. This means that it is harder for the new task to preempt the current one.
+    \item If the new task has a smaller weight than the current one, then the corresponding weighted granularity will be larger. This means that it is harder for the new task to preempt the current one.
     
-    \item on the contrary, if the new task has a larger weight, it will be easier to preempt the current task. 
+    \item On the contrary, if the new task has a larger weight, it will be easier to preempt the current task. 
 \end{itemize}
 
-If the current task needs to be rescheduled, the \verb|check_preempt_wakeup()| function, calls \verb|set_next_buddy()| that tells to scheduler to favor the newly added task when choosing the next task. Finally the \verb|resched_curr()|\ref{resched_curr} function is called.
+If the current task needs to be rescheduled, \verb|check_preempt_wakeup()| calls \verb|set_next_buddy()|, that tells to scheduler to favor the newly added task when choosing the next task. Finally, \verb|resched_curr()| is called.
 
 \subsubsection{A task is woken up}
 
 Waking up a process is similar to creating a new one: the task is first inserted into the runqueue and then the system checks if the currently running task needs to be rescheduled.
 
-Before inserting the task into the runqueue, the \verb|sched_waking|\label{trace:sched_waking} event is triggered and the task's state is set to \verb|TASK_WAKING|. The task is then inserted into the runqueue by \verb|activate_task()|. Once it is on the runqueue the \verb|task_struct->on_rq| field  is set to \verb|TASK_ON_RQ_QUEUED|. Finally the function \verb|ttwu_do_wakeup()| is called, which checks if the current task can be preempted with \verb|check_preempt_curr()|\ref{check_preempt_curr}, sets the task's state to \verb|TASK_RUNNING| and triggers the \verb|sched_wakeup|\label{trace:sched_wakeup} event.
+Before inserting the task into the runqueue, the \verb|sched_waking|\label{trace:sched_waking} event is triggered and the task's state is set to \verb|TASK_WAKING|. The task is then inserted into the runqueue by \verb|activate_task()|. Once it is on the runqueue, the \verb|task_struct->on_rq| field  is set to \verb|TASK_ON_RQ_QUEUED|. Finally, \verb|ttwu_do_wakeup()| is called, which checks if the current task can be preempted with \verb|check_preempt_curr()|; then it sets the task's state to \verb|TASK_RUNNING| and triggers the \verb|sched_wakeup|\label{trace:sched_wakeup} event.
 
-\subsubsection{enqueue\_task()}
-Whether the task was just created or it was woken up from sleep, his \verb|task_struct| has to be added to the runqueue. This is done by the \verb|enqueue_task()| function. It takes as arguments a pointer \verb|rq| to the runqueue in which to insert the task, a pointer \verb|p| to the \verb|task_struct| and an int representing the flags. It updates the \verb|cfs_rq| utilization statistics and invokes the \verb|enqueue_entity()| function that:
+\paragraph{enqueue\_task()}
+Whether the task was just created or it was woken up from sleep, his \verb|task_struct| has to be added to the runqueue. This is done by the \verb|enqueue_task()| function. It takes as arguments a pointer \verb|rq| to the runqueue, a pointer \verb|p| to the \verb|task_struct| and an integer for the flags. It updates the \verb|cfs_rq| utilization statistics and invokes the \verb|enqueue_entity()| function that:
 \begin{itemize}
-    \item calls \verb|updats_curr()| adds \verb|cfs_rq->min_vruntime| to \verb|se->vruntime|, otherwise the new task would have too large boost compared to running tasks. Note that the virtual runtime is decreased when dequeuing a task.
-    \item updates the load statistics of the entity and its group
-    \item if \verb|ENQUEUE_WAKEUP| calls \verb|check_spread|
-    \item calls \verb|__enqueue_entity()| that insert the entity in the red-black tree representing the runqueue.
+    \item Calls \verb|update_curr()|, then adds \verb|cfs_rq->min_vruntime| to \verb|se->vruntime|. This is done because otherwise the new task would have a very small vruntime, which means huge boost compared to the other tasks. Note that the virtual runtime is decreased when dequeuing a task.
+    \item Updates the load statistics of the entity and its group
+    \item Calls \verb|__enqueue_entity()|, which inserts the entity of the \verb|task_struct| in the red-black tree representing the runqueue.
 \end{itemize}
 
 % TODO
 % \subsubsection{schedule()}
 
 % \subsubsection{context\_switch()}
-
-% in cfs_rq
-%     struct sched_entity	*curr;
-% 	struct sched_entity	*next;
-% 	struct sched_entity	*last;
-% 	struct sched_entity	*skip;

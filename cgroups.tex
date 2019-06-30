@@ -3,11 +3,10 @@
 \section{Introduction}
 
 %What is a group, why it could be useful to group tasks and some examples
-The Completely Fair Scheduler (CFS), as explained in section \ref{ch:sched}, tries to divide the CPU equally among all the threads. But it does not take in consideration if two threads belongs to the same process or to the same user. This means that it is fair only from the perspective of the single threads, but it is not fair from a process or user perspective. If there are more users on a system and the system administrator wants to divide the CPU equally between them, he can't do that with the basic version of CFS. The CPU assigned to each user would depend on the number and type of processes that they have.
-
+The Completely Fair Scheduler (CFS), as illustrated in Chapter~\ref{ch:sched}, tries to divide the CPU equally among all the threads. This assignment of the CPU resource, however, does not account for the case of two threads belonging to the same process or to the same user. This means that CFS is fair only from the perspective of the single threads, but it is not fair from a process or user perspective. 
 Suppose that, in a system with 50 tasks, 49 belongs to user A and only 1 belongs to user B. CFS assign to each one of the 50 tasks 1/50 of the CPU. This translates to a 98\% CPU usage for user A and only 2\% for user B. From the user perspective this is not fair.
-
 In a scheduler that is also fair to the users, the 49 tasks of user A should get each roughly 1\% of CPU time and the one task of user B should get 50\%. This way both users would get 50\% of the CPU. 
+Hence, if there are more users on a system and the system administrator wants to divide the CPU equally among them, [s]he cannot do that with the basic version of CFS. The CPU assigned to each user would depend on the number and type of processes that they have.
 
 This concept can be expanded to other types of group, not only user's groups. The tasks can be grouped in many different ways, but the same concept of fair group scheduling can be applied. A group could also be part of another group. Thus creating an hierarchy where each group at each level the CPU time would be equally divided between all the members of group.
 
@@ -33,7 +32,7 @@ Each entity that corresponds to a group has its own run queue where all its chil
 
 When the scheduler has to pick the next task to run it starts from the top of the hierarchy and then goes down. It first chooses the most deserving entity from the top-level queue using the normal CFS algorithm. If it chosen entity represents a task, it is executed normally. If it represents a group, the process is repeated and an entity is chosen from the group's own run queue. This process continues until a task is selected.
 
-The simplest solution to calculate the virtual run time of a group, would be to sum all the virtual run times of its children. But, as we noted earlier, the children and the parent entities could have different weights. And the weight determines how fast or how slow the virtual run time of an entity increases. Summing all the virtual run times together would lead to imprecise accounting and unfair behaviors. Instead it is calculated by taking the real (not weighted) total run time of the children and weighting it by the the weight of the group entity.
+The simplest solution to calculate the virtual run time of a group, would be to sum all the virtual run times of its children. But, as we noted earlier, the children and the parent entities could have different weights. And the weight determines how fast or how slow the virtual run time of an entity increases. Summing all the virtual run times together would lead to imprecise accounting and unfair behaviors. Instead it is calculated by taking the real (not weighted) total run time of the children and weighting it by the weight of the group entity.
 
 \paragraph{Multiprocessor}
 In multiprocessor systems the tasks belonging to a group could run at the same time on different CPUs. To allow the migration of tasks, each CPU maintains his own scheduling entity for every group. Tasks belonging to the same group can then be migrated only between the run queues of these scheduling entities. All the different entities of group are stored inside a dedicated struct, see section \ref{sec:group_sched_impl} for more details.
@@ -199,7 +198,7 @@ As mentioned before, when a group exceeds its quota, a rescheduling action is tr
     \item \verb|cfs_rq->throttled| is set to 1.
     \item the \verb|cfs_rq| is added to the list of throttled groups contained in the \verb|cfs_bandwidth| struct of the task group.
 \end{itemize}
-Note that the the group are throttled independently on each CPU.
+Note that the group are throttled independently on each CPU.
 
 When a thread is woken up, a throttled entity could be added again to the runqueue. In order to avoid this, the \verb|enqueue_entity()| function checks if the added entity has exceeded its bandwidth.
 
@@ -245,21 +244,49 @@ To track or to control the resources used by a cgroup, a subsystem has to be att
 The subsystems are not attached directly to the cgroups, instead they are attached to an hierarchy, which can have more than one subsystem or not at all. But a subsystem can not be attached to two hierarchies at the same time. Given these restrictions, the default approach in many distributions is to have a different hierarchy for each subsystem. Only the \verb|cpu| and the \verb|cpuacct| subsystems usually use the same hierarchy. The presence of multiples hierarchies allows for more flexibility in controlling resources, but complicates their usage, as more hierarchies need to be managed at the same time. In \verb|cgroup-v2| this system is substituted by a single hierarchy for more simplicity.
 
 \subsection{How to control \textit{cgroups}}
-Control groups don't have any dedicated system calls, instead the user can interact with them via a dedicated filesystem. This allows the kernel and the user to communicate with each other. Each hierarchy is mounted separately with the command: \verb|mount -t cgroup -o cpuacct,cpu hier1 /sys/fs/cgroup/rg1|. \newline This mounts a cgroup hierarchy with the cpuacct and the cpu subsystems attached. The set of subsystems attached can not be changed unless the hierarchy consists of a single cgroup.
+Control groups don't have any dedicated system calls, instead the user can interact with them via a dedicated filesystem. This allows the kernel and the user to communicate with each other. Each hierarchy is mounted separately with the command: \verb|mount -t cgroup -o cpuacct,cpu none /sys/fs/cgroup/rg1|. \newline This mounts a cgroup hierarchy with the cpuacct and the cpu subsystems attached. The set of subsystems attached can not be changed unless the hierarchy consists of a single cgroup.
 
-When the hierarchy is created there is only one root cgroup and all the tasks are contained in it. To create a new cgroup we create a new directory with \verb|mkdir|, this creates an empty group. In the same way we can remove a cgroup with \verb|rmdir|, but only if it is empty. 
+When the hierarchy is first created only one \verb|cgroup| is present and all the tasks on the system are contained in it. The user can create a new \verb|cgroup| by creating a new directory with \verb|mkdir|. This creates a new \verb|cgroup| with the name of the directory. In a similar way a \verb|cgroup| can be removed with \verb|rmdir|, but only if it has no tasks in it and no child groups. 
 
-When a cgroup is created some files are created with it. These files allow the user to control the cgroup. One of these files is \verb|tasks|, and it is used to control which threads are member of the \verb|cgroup|. When the user wants to move one thread from a group to another, he writes its PID in the \verb|tasks| file of the destination group. If the user has the permission, the task will be deleted from the previous group and added to the new one. All the threads of a process can also be moved all at once by writing one of the PIDs of its threads in the \verb|cgroup.proc| file. 
+When a cgroup is created some files are created with it. These files allow the user to control the cgroup. One of these files is \verb|tasks|, and it is used to control which threads are member of the \verb|cgroup|. When the user wants to move one thread from a group to another, [s]he writes its PID in the \verb|tasks| file of the destination group. If the user has the permission, the task will be deleted from the previous group and added to the new one. All the threads of a process can also be moved all at once by writing one of the PIDs of its threads in the \verb|cgroup.proc| file. 
 
-\verb|tasks| and \verb|cgroup.proc| are two files that are present in every \verb|cgroup|, but there are also other files that depends on the subsystems attached to the hierarchy. They can be used by the user to control the behaviour of the subsystems or they can be used by the subsystems for resource accounting.  The next section analyzes in more details the \verb|cpu| and \verb|cpuacct| subsystems.
+\verb|tasks| and \verb|cgroup.proc| are two files present in every \verb|cgroup| directory, but there are also other files that depends on the subsystems attached to the hierarchy. They can be used by the user to control the behaviour of the subsystems or they can be used by the subsystems for resource accounting.  The next section analyzes in more details the \verb|cpu| and \verb|cpuacct| subsystems.
 
-\subsubsection{The cpuacct subsystem}
+\subsubsection{The \textit{cpuacct} subsystem}
 
-The CPU accounting controller (\verb|cpuacct|) is used to account the CPU usage of a \verb|cgroup|. The total usage of a group not only depends on the tasks directly present in the group, but also on all the tasks of its child groups.
+The CPU accounting subsystem (\verb|cpuacct|) is used to account the CPU usage of a \verb|cgroup|. The total usage of a group not only depends on the tasks directly present in the group, but also on all the tasks of its child groups.
 
-\subsection{Implementation}
+To mount a new hierarchy with only the \verb|cpuacct| subsystem the command is: \verb|mount -t cgroup -ocpuacct none /sys/fs/cgroup|. And, again, child groups can be created with \verb|mkdir|.
 
-\subsubsection{css}
+When this subsystem is attached, a few more files are generated inside the directory of each \verb|cgroup| of this hierarchy:
+\begin{itemize}
+    \item \verb|cpuacct.usage| contains a value that represent the CPU time (in nanoseconds) obtained  by this group
+    \item \verb|cpuacct.usage_percpu| reports the CPU usage (in nanoseconds) of the tasks on each CPU.
+    \item \verb|cpuacct.stat| shows the group's CPU time in \verb|USER_HZ| unit. For more detail on timekeeping see section \ref{sec:timekeeping}. The CPU time is divided in \verb|user| and \verb|system| time. The first represents the time spend by the tasks in user mode, and the second the time spent in kernel mode.
+\end{itemize}
+Some other files may also be present that show the usage in nanoseconds divided in \verb|user| and \verb|system| time.
+
+These are all the features provided by \verb|cpuacct|, it does not alow any control over the CPU usage.
+
+\subsubsection{The \textit{cpu} subsystem}
+
+The \verb|cpu| subsystem controls the CPU resources used by \verb|cgroups|. In section \ref{sec:group_sched} we saw how groups of tasks are scheduled, but we haven't explained how these groups are created. It is done via \verb|cgroups|: when the \verb|cpu| subsystem is attached to an hierarchy, the scheduler automatically creates a parallel hierarchy of \verb|sched_entities| used by the scheduler. Every time that the \verb|cgroups|'s structure is modified, the entities are changed accordingly. 
+
+As we saw, the \verb|sched_entities| contain all the information needed to schedule the groups and the tasks. One of the most important values is the \verb|weight| of an entity, which is used to calculate the virtual runtime. For tasks the weight can be changed by increasing or decreasing their nice value. But for groups their weight can be controlled via the \verb|cgroups|'s filesystem.
+
+\paragraph{\textit{cpu.shares}}
+The control of the weight is done through a file called \verb|cpu.shares|, where the user can write the desired weight for the group. The default value, when a \verb|cgroup| is created, is 1024. The weight of the parent group will influence all the child groups, as the total time is divided between all the tasks directly belonging to the group, but also between all tasks of the child groups.
+
+\paragraph{Bandwidth limit}
+A user can also decide to limit the CPU usage of a group. This is also done via the \verb|cpu| subsystem. Remember that the CPU limit for a group is controlled by two values: a period and a quota. The quota is the maximum amount of time that a group can spend on the CPU in the specified period. To control these two values the \verb|cpu| subsystem has two dedicated files. In the first one, named \verb|cpu.cfs_period_us|, the user can write the desired period. The second, named \verb|cpu.cfs_quota_us|, is used to control the quota. Both values are expressed in microseconds. When the value of \verb|cpu.cfs_quota_us| is set to $-1$, the CPU bandwidth control is disabled.
+
+The \verb|cpu| subsystem also offers some statistics related to CPU bandwidth in a file named \verb|cpu.stat|. It contains 3 values:
+\begin{itemize}
+    \item \verb|nr_periods|, which is the total number of periods elapsed.
+    \item \verb|nr_throttled|, which is the number of periods in where the group has finished his quota and it has been throttled.
+    \item \verb|throttled_time|, which is the total amount of time that the group has spent in a throttled state.
+\end{itemize}
+
 
 
 
