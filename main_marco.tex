@@ -1,4 +1,5 @@
 \documentclass[10pt, oneside]{book}
+% \documentclass[10pt]{book} %to print
 
 \usepackage[utf8]{inputenc}
 \usepackage[english]{babel}
@@ -15,6 +16,7 @@
 \usepackage{minted}
 \usepackage{hyperref}
 \usepackage{cleveref}
+\usepackage{pdfpages}
 % code style
 % \newminted[code]{c}{frame=single, 
 % framesep=2mm,
@@ -35,9 +37,6 @@ breakafter=d,
 linenos
 }
 
-% EB: da usare al posto di verbatim quando le linee escono fuori dalla pagina
-\newenvironment{mylongverb}{\begin{Verbatim}[xleftmargin=-2cm,fontsize=\footnotesize]}{\end{Verbatim}}
-
 \newminted[codebash]{bash}{frame=single, 
 framesep=2mm,
 baselinestretch=1.2,
@@ -46,21 +45,22 @@ breakafter=d,
 linenos
 }
 
+% EB: da usare al posto di verbatim quando le linee escono fuori dalla pagina
+\newenvironment{mylongverb}{\begin{Verbatim}[xleftmargin=-2cm,fontsize=\footnotesize]}{\end{Verbatim}}
+
 \newcommand{\mycomment}[1]{\textbf{#1}}  % per vedere i commenti
 % \newcommand{\mycomment}[1]{}     % per rimuovere i commenti
 
-
-\author{Marco Perronet}
-\title{Linux Kernel: monitoring the scheduler by trace\_sched* events}
-\date{}
-
+% \author{Marco Perronet}
+% \title{Linux Kernel: monitoring the scheduler by trace\_sched* events}
+% \date{}
 
 \begin{document}
 
 \frontmatter
-
+%TITLE
 \begin{titlepage}
-\maketitle  
+\includepdf[pages=-,pagecommand={}]{frontispiece/frontispiece.pdf}
 \end{titlepage}
 
 \tableofcontents
@@ -93,7 +93,7 @@ Linus Trovalds.\\
 \bibitem{con}
 Con Kolivas.
 \textit{RSDL completely fair starvation free interactive cpu scheduler}.
-Linux kernel mailing list, 2007. 
+Linux kernel mailing list, 2007.
 \texttt{lwn.net/Articles/224654/}
 
 \bibitem{ingo}
@@ -110,12 +110,22 @@ Linux kernel mailing list, 2007.
 \textit{Documentation of the Linux Kernel}\\
 \texttt{www.kernel.org/doc/Documentation/scheduler/sched-nice-design.txt}
 
+\bibitem{O(1)}
+\textit{On the Fairness of Linux O(1) Scheduler.} 2014.\\
+\url{http://ijssst.info/Vol-15/No-3/data/3857a668.pdf}
+
 \bibitem{amdahl}
 Gene M.\ Amdahl.
 \textit{Validity of the single processor approach to achieving large scale
 computing capabilities}.
-1967.
-\texttt{http://www-inst.eecs.berkeley.edu/~n252/paper/Amdahl.pdf}
+1967.\\
+\texttt{http://www-inst.eecs.berkeley.edu/\textasciitilde n252/paper/Amdahl.pdf}
+
+\bibitem{tlk}
+David Rusling.
+\textit{The Linux Kernel.}
+1999.\\
+\url{https://www.tldp.org/LDP/tlk/}
 
 \bibitem{secrets}
 Steven Rostedt.
@@ -138,9 +148,9 @@ The article is a follow up to:\\
 Part 1 -- \texttt{lwn.net/Articles/379903/}.\\
 Part 2 -- \texttt{lwn.net/Articles/381064/}.
 \end{thebibliography}
-\end{document}
 
-\section{Testing}
+\end{document}
+\chapter{Testing}
 %just testing equations etc
 \begin{equation}
     nice\in[-19 \dots 20]
@@ -188,745 +198,6 @@ Default latency.
     granularity = 0.75ms(1 + \log_2 n_{CPU})
 \end{equation}
 Default granularity.
-
-%FUNCTIONS CODE
-
-\begin{code}
-void scheduler_tick(void) //If current task needs to be scheduled out, then TIF_NEED_RESCHED flag is set for it
-{
-	int cpu = smp_processor_id();
-	struct rq *rq = cpu_rq(cpu);
-	struct task_struct *curr = rq->curr;
-	struct rq_flags rf;
-
-	sched_clock_tick();
-
-	rq_lock(rq, &rf);
-
-	update_rq_clock(rq);
-	curr->sched_class->task_tick(rq, curr, 0);
-	cpu_load_update_active(rq);
-	calc_global_load_tick(rq);
-	psi_task_tick(rq);
-
-	rq_unlock(rq, &rf);
-
-	perf_event_task_tick();
-
-#ifdef CONFIG_SMP
-	rq->idle_balance = idle_cpu(cpu);
-	trigger_load_balance(rq);
-#endif
-}
-\end{code}
-\begin{code}
-static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued){
-	struct cfs_rq *cfs_rq;
-	struct sched_entity *se = &curr->se;
-
-	for_each_sched_entity(se) {
-		cfs_rq = cfs_rq_of(se);
-		entity_tick(cfs_rq, se, queued);
-	}
-
-	if (static_branch_unlikely(&sched_numa_balancing))
-		task_tick_numa(rq, curr);
-
-	update_misfit_status(curr, rq);
-}
-\end{code}
-\begin{code}
-static void entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued){
-	update_curr(cfs_rq);
-	update_load_avg(cfs_rq, curr, UPDATE_TG);
-	update_cfs_group(curr);
-	// ... roba hrtimer
-	if (cfs_rq->nr_running > 1)
-		check_preempt_tick(cfs_rq, curr);	
-}	
-\end{code}
-\begin{code}
-//First, it determines time slice for the current task
-//Second, it set resched flag on current task if either of two conditions are satisifed
-//(a) if current task has run beyond its time slice
-//(b) if current task vruntime exceeds next task vruntime by time slice, provided time run by current task is more than sysctl_sched_min_granularity
-static void check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr){
-	unsigned long ideal_runtime, delta_exec;
-	struct sched_entity *se;
-	s64 delta;
-
-	ideal_runtime = sched_slice(cfs_rq, curr);
-	delta_exec = curr->sum_exec_runtime - curr->prev_sum_exec_runtime;//Why doesn't this use calc_delta_fair()?
-	if (delta_exec > ideal_runtime) {
-		resched_curr(rq_of(cfs_rq));
-		/*
-		 * The current task ran long enough, ensure it doesn't get
-		 * re-elected due to buddy favours.
-		 */
-		clear_buddies(cfs_rq, curr);
-		return;
-	}
-
-	/*
-	 * Ensure that a task that missed wakeup preemption by a
-	 * narrow margin doesn't have to wait for a full slice.
-	 * This also mitigates buddy induced latencies under load.
-	 */
-	if (delta_exec < sysctl_sched_min_granularity)
-		return;
-
-	se = __pick_first_entity(cfs_rq);
-	delta = curr->vruntime - se->vruntime;
-
-	if (delta < 0) //Curr vruntime is less than the next task's vruntime
-		return;
-
-	if (delta > ideal_runtime) //Current task vruntime exceeded next task vruntime by a full time slice
-		resched_curr(rq_of(cfs_rq));
-}
-\end{code}
-\begin{code}
-static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se){
-	u64 slice = __sched_period(cfs_rq->nr_running + !se->on_rq);
-
-	for_each_sched_entity(se) {
-		struct load_weight *load;
-		struct load_weight lw;
-
-		cfs_rq = cfs_rq_of(se);
-		load = &cfs_rq->load;
-
-		if (unlikely(!se->on_rq)) {
-			lw = cfs_rq->load;
-
-			update_load_add(&lw, se->load.weight);
-			load = &lw;
-		}
-		slice = __calc_delta(slice, se->load.weight, load);
-	}
-	return slice;
-}
-\end{code}
-\begin{code}
-static u64 __sched_period(unsigned long nr_running){
-	if (unlikely(nr_running > sched_nr_latency))
-		return nr_running * sysctl_sched_min_granularity;
-	else
-		return sysctl_sched_latency;
-}
-\end{code}
-\begin{code}
-static void update_curr(struct cfs_rq *cfs_rq) //This is __update_curr{
-	//Updates vruntime of curr using calc_delta_fair
-	struct sched_entity *curr = cfs_rq->curr;
-	u64 now = rq_clock_task(rq_of(cfs_rq));
-	u64 delta_exec;
-
-	if (unlikely(!curr))
-		return;
-
-	delta_exec = now - curr->exec_start; //time elapsed since the last time we called update_curr
-	if (unlikely((s64)delta_exec <= 0))
-		return;
-
-	curr->exec_start = now;
-
-	schedstat_set(curr->statistics.exec_max,
-		      max(delta_exec, curr->statistics.exec_max));
-
-	curr->sum_exec_runtime += delta_exec; //actual runtime
-	schedstat_add(cfs_rq->exec_clock, delta_exec);
-
-	curr->vruntime += calc_delta_fair(delta_exec, curr); //fairly scaled runtime
-	update_min_vruntime(cfs_rq);
-
-	if (entity_is_task(curr)) {
-		struct task_struct *curtask = task_of(curr); //uses container_of
-
-		trace_sched_stat_runtime(curtask, delta_exec, curr->vruntime);
-		cgroup_account_cputime(curtask, delta_exec);
-		account_group_exec_runtime(curtask, delta_exec);
-	}
-
-	account_cfs_rq_runtime(cfs_rq, delta_exec); //adds to the total runtime
-}
-\end{code}
-\begin{code}
-/*
- * delta /= w
- */
-static inline u64 calc_delta_fair(u64 delta, struct sched_entity *se){
-	if (unlikely(se->load.weight != NICE_0_LOAD))
-		delta = __calc_delta(delta, NICE_0_LOAD, &se->load); //Scale it fairly, basically delta = delta_exec * NICE_0_LOAD / curr->load.weight;
-
-	return delta; //Do not scale delta with the weighting factor
-}
-\end{code}
-\begin{code}
-asmlinkage __visible void __sched schedule(void){
-	struct task_struct *tsk = current;
-
-	sched_submit_work(tsk);
-	do {
-		preempt_disable();
-		__schedule(false);
-		sched_preempt_enable_no_resched();
-	} while (need_resched());
-}
-\end{code}
-\begin{code}
-//min_vruntime = MAX(min_vruntime, MIN(current_running_task.vruntime, cfs_rq.left_most_task.vruntime))
-//So: the max is there to ensure that min_vruntime is increasing monothonically, it should never go backwards!
-static void update_min_vruntime(struct cfs_rq *cfs_rq){
-	struct sched_entity *curr = cfs_rq->curr;
-	struct rb_node *leftmost = rb_first_cached(&cfs_rq->tasks_timeline);
-
-	u64 vruntime = cfs_rq->min_vruntime;
-
-	if (curr) {
-		if (curr->on_rq)
-			vruntime = curr->vruntime;
-		else
-			curr = NULL;
-	}
-
-	if (leftmost) { /* non-empty tree */
-		struct sched_entity *se;
-		se = rb_entry(leftmost, struct sched_entity, run_node);
-
-		if (!curr)
-			vruntime = se->vruntime;
-		else
-			vruntime = min_vruntime(vruntime, se->vruntime);
-	}
-
-	/* ensure we never gain time by being placed backwards. */
-	cfs_rq->min_vruntime = max_vruntime(cfs_rq->min_vruntime, vruntime);
-}
-\end{code}
-\begin{code}
-struct sched_entity *__pick_first_entity(struct cfs_rq *cfs_rq){
-	struct rb_node *left = rb_first_cached(&cfs_rq->tasks_timeline);
-
-	if (!left)
-		return NULL;
-
-	return rb_entry(left, struct sched_entity, run_node);
-}
-\end{code}
-
-STRUCTS CODE
-\begin{code}
-#define MAX_NICE	19
-#define MIN_NICE	-20
-#define NICE_WIDTH	(MAX_NICE - MIN_NICE + 1)
-
-#define MAX_USER_RT_PRIO	100
-#define MAX_RT_PRIO		MAX_USER_RT_PRIO
-
-#define MAX_PRIO		(MAX_RT_PRIO + NICE_WIDTH)
-#define DEFAULT_PRIO		(MAX_RT_PRIO + NICE_WIDTH / 2)
-
-/*
- * Convert user-nice values [ -20 ... 0 ... 19 ]
- * to static priority [ MAX_RT_PRIO..MAX_PRIO-1 ],
- * and back.
- */
-#define NICE_TO_PRIO(nice)	((nice) + DEFAULT_PRIO)
-#define PRIO_TO_NICE(prio)	((prio) - DEFAULT_PRIO)
-
-/*
- * 'User priority' is the nice value converted to something we
- * can work with better when scaling various scheduler parameters,
- * it's a [ 0 ... 39 ] range.
- */
-#define USER_PRIO(p)		((p)-MAX_RT_PRIO)
-#define TASK_USER_PRIO(p)	USER_PRIO((p)->static_prio)
-#define MAX_USER_PRIO		(USER_PRIO(MAX_PRIO))
-\end{code}
-\begin{code}
-static void set_load_weight(struct task_struct *p, bool update_load){
-	int prio = p->static_prio - MAX_RT_PRIO;
-	struct load_weight *load = &p->se.load;
-
-	/*
-	 * SCHED_IDLE tasks get minimal weight:
-	 */
-	if (idle_policy(p->policy)) {
-		load->weight = scale_load(WEIGHT_IDLEPRIO);
-		load->inv_weight = WMULT_IDLEPRIO;
-		p->se.runnable_weight = load->weight;
-		return;
-	}
-
-	/*
-	 * SCHED_OTHER tasks have to update their load when changing their
-	 * weight
-	 */
-	if (update_load && p->sched_class == &fair_sched_class) {
-		reweight_task(p, prio);
-	} else {
-		load->weight = scale_load(sched_prio_to_weight[prio]);
-		load->inv_weight = sched_prio_to_wmult[prio];
-		p->se.runnable_weight = load->weight;
-	}
-}
-\end{code}
-\begin{code}
-//arch/x86/include/asm/thread_info.h
-struct thread_info {
-	unsigned long		flags;		/* low level flags */
-	u32			status;		/* thread synchronous flags */
-};
-\end{code}
-\begin{code}
-//include/linux/thread_info.h
-#ifdef CONFIG_THREAD_INFO_IN_TASK
-/*
- * For CONFIG_THREAD_INFO_IN_TASK kernels we need <asm/current.h> for the
- * definition of current, but for !CONFIG_THREAD_INFO_IN_TASK kernels,
- * including <asm/current.h> can cause a circular dependency on some platforms.
- */
-#include <asm/current.h>
-#define current_thread_info() ((struct thread_info *)current)
-#endif
-
-// ...
-
-/*
- * flag set/clear/test wrappers
- * - pass TIF_xxxx constants to these functions
- */
-
-//set_tsk_need_resched(struct task_struct *tsk) in sched.h leads to this:
-static inline void set_ti_thread_flag(struct thread_info *ti, int flag){
-	set_bit(flag, (unsigned long *)&ti->flags);
-}
-
-//arch/x86/include/asm/current.h
-#include <linux/compiler.h>
-#include <asm/percpu.h>
-
-#ifndef __ASSEMBLY__
-struct task_struct;
-
-DECLARE_PER_CPU(struct task_struct *, current_task);
-
-static __always_inline struct task_struct *get_current(void)
-{
-	return this_cpu_read_stable(current_task);
-}
-
-#define current get_current()
-
-//arch/x86/include/asm/percpu.h
-/*
- * this_cpu_read() makes gcc load the percpu variable every time it is
- * accessed while this_cpu_read_stable() allows the value to be cached.
- * this_cpu_read_stable() is more efficient and can be used if its value
- * is guaranteed to be valid across cpus.  The current users include
- * get_current() and get_thread_info() both of which are actually
- * per-thread variables implemented as per-cpu variables and thus
- * stable for the duration of the respective task.
- */
-#define this_cpu_read_stable(var)	percpu_stable_op("mov", var)
-
-#define percpu_stable_op(op, var)			\
-({							\
-	typeof(var) pfo_ret__;				\
-	switch (sizeof(var)) {				\
-	case 1:						\
-		asm(op "b "__percpu_arg(P1)",%0"	\
-		    : "=q" (pfo_ret__)			\
-		    : "p" (&(var)));			\
-		break;					\
-	case 2:						\
-		asm(op "w "__percpu_arg(P1)",%0"	\
-		    : "=r" (pfo_ret__)			\
-		    : "p" (&(var)));			\
-		break;					\
-	case 4:						\
-		asm(op "l "__percpu_arg(P1)",%0"	\
-		    : "=r" (pfo_ret__)			\
-		    : "p" (&(var)));			\
-		break;					\
-	case 8:						\
-		asm(op "q "__percpu_arg(P1)",%0"	\
-		    : "=r" (pfo_ret__)			\
-		    : "p" (&(var)));			\
-		break;					\
-	default: __bad_percpu_size();			\
-	}						\
-	pfo_ret__;					\
-})
-\end{code}
-\begin{code}
-//include/sched.h
-union thread_union {
-#ifndef CONFIG_ARCH_TASK_STRUCT_ON_STACK
-	struct task_struct task;
-#endif
-#ifndef CONFIG_THREAD_INFO_IN_TASK
-	struct thread_info thread_info;
-#endif
-	unsigned long stack[THREAD_SIZE/sizeof(long)];
-};
-\end{code}
-\begin{code}
-struct task_struct {
-#ifdef CONFIG_THREAD_INFO_IN_TASK
-	/*
-	 * For reasons of header soup (see current_thread_info()), this
-	 * must be the first element of task_struct.
-	 */
-	struct thread_info		thread_info;
-#endif
-	/* -1 unrunnable, 0 runnable, >0 stopped: */
-	volatile long			state;
-
-	void				*stack;
-	atomic_t			usage;
-	/* Per task flags (PF_*), defined further below: */
-	unsigned int			flags;
-	unsigned int			ptrace;
-
-    / ...
-    
-	/* Current CPU: */
-	unsigned int			cpu;
-#endif
-	unsigned int			wakee_flips;
-	unsigned long			wakee_flip_decay_ts;
-	struct task_struct		*last_wakee;
-
-	/*
-	 * recent_used_cpu is initially set as the last CPU used by a task
-	 * that wakes affine another task. Waker/wakee relationships can
-	 * push tasks around a CPU where each wakeup moves to the next one.
-	 * Tracking a recently used CPU allows a quick search for a recently
-	 * used CPU that may be idle.
-	 */
-	int				recent_used_cpu;
-	int				wake_cpu;
-#endif
-	int				on_rq;
-
-	int				prio;
-	int				static_prio;
-	int				normal_prio;
-	unsigned int			rt_priority;
-
-	const struct sched_class	*sched_class; //Contains the task_tick function and other functions
-											  //This contains a circular list of all scheduling classes
-	struct sched_entity		se;
-	struct sched_rt_entity		rt;
-	
-	// ...
-	
-	struct mm_struct		*mm;
-	struct mm_struct		*active_mm;
-	
-	// ...
-	
-	/*
-	 * Children/sibling form the list of natural children:
-	 */
-	struct list_head		children;
-	struct list_head		sibling;
-	struct task_struct		*group_leader;
-
-	/*
-	 * 'ptraced' is the list of tasks this task is using ptrace() on.
-	 *
-	 * This includes both natural children and PTRACE_ATTACH targets.
-	 * 'ptrace_entry' is this task's link on the p->parent->ptraced list.
-	 */
-	struct list_head		ptraced;
-	struct list_head		ptrace_entry;
-
-	/* PID/PID hash table linkage. */
-	struct pid			*thread_pid;
-	struct hlist_node		pid_links[PIDTYPE_MAX];
-	struct list_head		thread_group;
-	struct list_head		thread_node;
-	
-	// ...
-	
-	char				comm[TASK_COMM_LEN];
-};
-\end{code}
-\begin{code}
-struct sched_entity { //Sched normal
-	/* For load-balancing: */
-	struct load_weight		load;
-	unsigned long			runnable_weight;
-	struct rb_node			run_node; //Node of this sched_entity
-	struct list_head		group_node;
-	unsigned int			on_rq;
-
-	u64				exec_start; 	  //Last time update_curr() was executed, expressed in ns
-	u64				sum_exec_runtime; //Actual runtime
-	u64				vruntime;		  //Fairly scaled runtime
-	u64				prev_sum_exec_runtime; //When a process is taken from the CPU, its current sum_exec_runtime value is preserved in prev_exec_runtime
-
-	u64				nr_migrations;
-
-	struct sched_statistics		statistics;
-
-#ifdef CONFIG_FAIR_GROUP_SCHED
-	int				depth;
-	struct sched_entity		*parent;
-	/* rq on which this entity is (to be) queued: */
-	struct cfs_rq			*cfs_rq;
-	/* rq "owned" by this entity/group: */
-	struct cfs_rq			*my_q; //If this is a group then this will be its sub-runqueue
-#endif
-
-#ifdef CONFIG_SMP
-	/*
-	 * Per entity load average tracking.
-	 *
-	 * Put into separate cache line so it does not
-	 * collide with read-mostly values above.
-	 */
-	struct sched_avg		avg; //Load average
-#endif
-};
-
-#ifdef CONFIG_FAIR_GROUP_SCHED
-/* An entity is a task if it doesn't "own" a runqueue */
-#define entity_is_task(se)	(!se->my_q)
-#else
-#define entity_is_task(se)	1
-#endif
-\end{code}
-\begin{code}
-struct load_weight {
-	unsigned long			weight;
-	u32				inv_weight;
-};
-\end{code}
-\begin{code}
-/*
- * Helpers for converting nanosecond timing to jiffy resolution
- */
-#define NS_TO_JIFFIES(TIME)	((unsigned long)(TIME) / (NSEC_PER_SEC / HZ))
-\end{code}
-\begin{code}
-struct cfs_bandwidth {
-#ifdef CONFIG_CFS_BANDWIDTH
-	raw_spinlock_t		lock;
-	ktime_t			period;
-	u64			quota;
-	u64			runtime;
-	s64			hierarchical_quota;
-	u64			runtime_expires;
-	int			expires_seq;
-
-	short			idle;
-	short			period_active;
-	struct hrtimer		period_timer;
-	struct hrtimer		slack_timer;
-	struct list_head	throttled_cfs_rq;
-
-	/* Statistics: */
-	int			nr_periods;
-	int			nr_throttled;
-	u64			throttled_time;
-
-	bool                    distribute_running;
-#endif
-};
-\end{code}
-\begin{code}
-struct sched_avg {
-	u64				last_update_time;
-	u64				load_sum;
-	u64				runnable_load_sum;
-	u32				util_sum;
-	u32				period_contrib;
-	unsigned long			load_avg;
-	unsigned long			runnable_load_avg;
-	unsigned long			util_avg;
-	struct util_est			util_est;
-} ____cacheline_aligned;
-\end{code}
-\begin{code}
-
-\end{code}
-\begin{code}
-struct rq {
-	/* runqueue lock: */
-	raw_spinlock_t		lock;
-
-	/*
-	 * nr_running and cpu_load should be in the same cacheline because
-	 * remote CPUs use both these fields when doing load calculation.
-	 */
-	unsigned int		nr_running;
-#ifdef CONFIG_NUMA_BALANCING
-	unsigned int		nr_numa_running;
-	unsigned int		nr_preferred_running;
-	unsigned int		numa_migrate_on;
-#endif
-	#define CPU_LOAD_IDX_MAX 5
-	unsigned long		cpu_load[CPU_LOAD_IDX_MAX];
-#ifdef CONFIG_NO_HZ_COMMON
-#ifdef CONFIG_SMP
-	unsigned long		last_load_update_tick;
-	unsigned long		last_blocked_load_update_tick;
-	unsigned int		has_blocked_load;
-#endif /* CONFIG_SMP */
-	unsigned int		nohz_tick_stopped;
-	atomic_t nohz_flags;
-#endif /* CONFIG_NO_HZ_COMMON */
-
-	/* capture load from *all* tasks on this CPU: */
-	struct load_weight	load;
-	unsigned long		nr_load_updates;
-	u64			nr_switches;
-
-	struct cfs_rq		cfs;
-	struct rt_rq		rt;
-	struct dl_rq		dl;
-    
-    struct hrtimer		hrtick_timer; //High resolution timer
-    // ...	
-};
-\end{code}
-\begin{code}
-struct cfs_rq {
-	struct load_weight	load;
-	unsigned long		runnable_weight;
-	unsigned int		nr_running;
-	unsigned int		h_nr_running;
-
-	u64			exec_clock;
-	u64			min_vruntime;
-#ifndef CONFIG_64BIT
-	u64			min_vruntime_copy;
-#endif
-
-	struct rb_root_cached	tasks_timeline; //rb_root
-	//There is no struct rb_node *rb_leftmost; !!
-	//Explaination: it gets calculated in update_min_vruntime() by rb_first_cached() (which is just a macro for (root)->rb_leftmost)
-
-	/*
-	 * 'curr' points to currently running entity on this cfs_rq.
-	 * It is set to NULL otherwise (i.e when none are currently running).
-	 */
-	struct sched_entity	*curr;
-	struct sched_entity	*next;
-	struct sched_entity	*last;
-	struct sched_entity	*skip;
-
-#ifdef CONFIG_SMP
-	/*
-	 * CFS load tracking
-	 */
-	struct sched_avg	avg; //Load average
-#ifndef CONFIG_64BIT
-	u64			load_last_update_time_copy;
-#endif
-	struct {
-		raw_spinlock_t	lock ____cacheline_aligned;
-		int		nr;
-		unsigned long	load_avg;
-		unsigned long	util_avg;
-		unsigned long	runnable_sum;
-	} removed;
-
-#ifdef CONFIG_FAIR_GROUP_SCHED
-	unsigned long		tg_load_avg_contrib;
-	long			propagate;
-	long			prop_runnable_sum;
-
-	/*
-	 *   h_load = weight * f(tg)
-	 *
-	 * Where f(tg) is the recursive weight fraction assigned to
-	 * this group.
-	 */
-	unsigned long		h_load;
-	u64			last_h_load_update;
-	struct sched_entity	*h_load_next;
-#endif /* CONFIG_FAIR_GROUP_SCHED */
-#endif /* CONFIG_SMP */
-
-#ifdef CONFIG_FAIR_GROUP_SCHED
-	struct rq		*rq;	/* CPU runqueue to which this cfs_rq is attached */
-
-	/*
-	 * leaf cfs_rqs are those that hold tasks (lowest schedulable entity in
-	 * a hierarchy). Non-leaf lrqs hold other higher schedulable entities
-	 * (like users, containers etc.)
-	 *
-	 * leaf_cfs_rq_list ties together list of leaf cfs_rq's in a CPU.
-	 * This list is used during load balance.
-	 */
-	int			on_list;
-	struct list_head	leaf_cfs_rq_list;
-	struct task_group	*tg;	/* group that "owns" this runqueue */
-
-#ifdef CONFIG_CFS_BANDWIDTH
-	int			runtime_enabled;
-	int			expires_seq;
-	u64			runtime_expires;
-	s64			runtime_remaining;
-
-	u64			throttled_clock;
-	u64			throttled_clock_task;
-	u64			throttled_clock_task_time;
-	int			throttled;
-	int			throttle_count;
-	struct list_head	throttled_list;
-#endif /* CONFIG_CFS_BANDWIDTH */
-#endif /* CONFIG_FAIR_GROUP_SCHED */
-};
-\end{code}
-\begin{code}
-struct sched_class {
-	const struct sched_class *next;
-
-	void (*enqueue_task) (struct rq *rq, struct task_struct *p, int flags);
-	void (*dequeue_task) (struct rq *rq, struct task_struct *p, int flags);
-	void (*yield_task)   (struct rq *rq);
-	bool (*yield_to_task)(struct rq *rq, struct task_struct *p, bool preempt);
-
-	void (*check_preempt_curr)(struct rq *rq, struct task_struct *p, int flags);
-
-	/*
-	 * It is the responsibility of the pick_next_task() method that will
-	 * return the next task to call put_prev_task() on the @prev task or
-	 * something equivalent.
-	 *
-	 * May return RETRY_TASK when it finds a higher prio class has runnable
-	 * tasks.
-	 */
-	struct task_struct * (*pick_next_task)(struct rq *rq,
-					       struct task_struct *prev,
-					       struct rq_flags *rf);
-	void (*put_prev_task)(struct rq *rq, struct task_struct *p);
-
-#ifdef CONFIG_SMP
-	int  (*select_task_rq)(struct task_struct *p, int task_cpu, int sd_flag, int flags);
-	void (*migrate_task_rq)(struct task_struct *p, int new_cpu);
-
-	void (*task_woken)(struct rq *this_rq, struct task_struct *task);
-
-	void (*set_cpus_allowed)(struct task_struct *p,
-				 const struct cpumask *newmask);
-
-	void (*rq_online)(struct rq *rq);
-	void (*rq_offline)(struct rq *rq);
-#endif
-
-	void (*set_curr_task)(struct rq *rq);
-	void (*task_tick)(struct rq *rq, struct task_struct *p, int queued);
-	void (*task_fork)(struct task_struct *p);
-	void (*task_dead)(struct task_struct *p);
-};
-\end{code}
 
 %DELETED PARTS:
 %%%%%%%%%%%%%%%%

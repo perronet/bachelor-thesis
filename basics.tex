@@ -405,13 +405,12 @@ Let's see in detail what happens when the kernel switches from process A to proc
     \item Address spaces are switched.
     \item Using the loaded stack pointer, process B moves its previously saved registers from its kernel stack into the registers. This is done by a series of \verb|pop [register]| assembly operations. Process B's state is now completely restored.
     \item process B exits kernel mode and restores its \textbf{user} context. This is accomplished by loading previously saved registers from the kernel stack: its \textbf{user mode} stack (\verb|ss:sp|), instruction pointer (\verb|cs:ip|) and data registers. Process B is now in user context.
-\end{enumerate} %checka tutto ciò usando cesati TODO
+\end{enumerate}
 
 To understand scheduling mechanisms in the next sections it's important to highlight something in step 2, when the scheduler gets called by a process running in kernel mode. It may be intuitive to think of the scheduler as some kernel thread that is permanently running in kernel mode, but that is not the case. \textbf{The scheduler does not run as a separate thread, it always runs in the context of the current thread.} This means that any process in the system that goes from/to kernel mode can potentially execute the scheduler himself, using its own kernel stack. What exactly can trigger the scheduler is something that we'll see in detail in section \ref{chap:implementation}. The simplest case is when a process voluntarily gives up the CPU by going into a sleep state, in which case it subsequently executes \verb|schedule()| in kernel mode (it would have switched already to kernel mode when sleeping). %CHECK THIS %user preemption and kernel preemption
 Another thing to highlight is how the user hardware context has nothing to do with context switch, this is because it always gets saved/restored on the kernel stack when entering/leaving the kernel. An implication of this fact is that context switches always happens in kernel mode, which is expected since it's a core system task.
 
 It's important to understand that a context switch generates significant overhead and, in fact, most of the scheduling overhead comes from context switching. It is caused by the need to switch address spaces and by the fact that context switching is not cache friendly. This is the reason why a context switch between threads (LWP) is almost inexpensive compared to context switching different processes: step 5 in the procedure is skipped because threads share an address space, so there is no need to switch it (again, this is why they are \textbf{lightweight} processes).
-%TODO aggiungi cache e controlla
 
 \subsection{Tasks lifetime}
 \label{sec:task_lifetime}

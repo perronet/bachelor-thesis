@@ -20,7 +20,7 @@ interacts with the user and tries to minimize the response time of such
 processes.
 
 %interactive tasks
-There are different types of tasks: a text editor, for example, will spend most of its time waiting for user input, and when the input arrives, the task should respond as fast as possible. We call this kind of task \textit{interactive}. Other types of tasks, on the other hand, could utilize the CPU all the time without ever sleeping. %TODO example BATCH?
+There are different types of tasks: a text editor, for example, will spend most of its time waiting for user input, and when the input arrives, the task should respond as fast as possible. We call this kind of task \textit{interactive}. Other types of tasks, on the other hand, could utilize the CPU all the time without ever sleeping.
 This means that the scheduler, not only needs to minimize the response time, but it should also give precedence to tasks that are highly interactive---especially on desktop systems.
 %CPU bound vs IO bound
 
@@ -75,7 +75,7 @@ Each class has its code, implementing its own algorithm. Within each class, poli
 \verb|SCHED_BATCH| is similar to \verb|SCHED_NORMAL| but it will preempt less frequently, so every process will run longer. For this reason, it is more suited for non-interactive workloads, typically on servers.
 \verb|SCHED_IDLE| is for tasks with very low priority, almost any task can preempt tasks with this policy.
 
-\paragraph{Priorities} %TODO static and dynamic priorities
+\paragraph{Priorities} %static and dynamic priorities?
 Each task has a priority associated with it, the first priority levels
 corresponds to real-time tasks and are scheduled with the
 \verb|SCHED_FIFO| or \verb|SCHED_RR| policy. Normal tasks are
@@ -106,7 +106,7 @@ The static priority and the bonus are then added to determine the dynamic priori
 \paragraph{Timeslice} %How are timeslices calulated
 The $O(1)$ scheduler is based on the concept of timeslice, this is the amount of time that a task runs on the CPU during a cycle. A new cycle begins when every task has been moved to the expired queue. Each priority level is mapped to a different timeslice: higher levels get mapped to more time while lower levels get mapped to less time. The timeslice can be expressed as a time quantity, but it's more usual to represent it as a percentage of the total time of a cycle.
 
-%http://ijssst.info/Vol-15/No-3/data/3857a668.pdf Cita questo (on the fairness of O(1))
+%http://ijssst.info/Vol-15/No-3/data/3857a668.pdf Cita questo (on the fairness of O(1)), cerca heuristics
 \paragraph{Interactive tasks and heuristics} %TODO talk about heuristics! (sleep time etc)
 A process that is marked as interactive will be reinserted in the
 active queue after it has expired its current timeslice. This is done 
@@ -122,7 +122,7 @@ This system is the biggest weakness of the O(1) scheduler: it generated unpredic
 % www.kernel.org/doc/Documentation/scheduler/sched-nice-design.txt
 \paragraph{Nice levels} 
 Prior to the introduction of the $O(1)$ scheduler, tasks with a nice of 19 were using too much CPU and users were complaining.\cite{nice_design} Because of this, $O(1)$ was specifically designed to have the minimum timeslice set to one \textit{jiffy}, which is the minimum measurable amount of time.  
-\begin{figure}[t] %how do i place it in the right position?
+\begin{figure}[t]
   \centering
   \begin{tikzpicture}
     \begin{axis}[ xlabel = nice,
@@ -240,7 +240,7 @@ The fraction of CPU time (timeslice) given to a task is equal to its weight divi
 \end{equation}
 By replacing the expression for $w(n)$ of Eq.~(\ref{eq:wight_compact}) and by setting $\alpha=\frac{5}{4}$, we find
 \begin{align*}
-    CPU_\% &=\frac{w(n)}{w(n)+w(n+d)} 
+    CPU_\% &=\frac{w(n)}{w(n)+w(n+d)}=
     \frac{\dfrac{2^{10}}{\alpha^{n}}}{\dfrac{2^{10}}{\alpha^{n}}+\dfrac{2^{10}}{\alpha^{n+d}}} =\\
     &=\frac{1}{\dfrac{\alpha^{n}}{2^{10}} \left(\dfrac{2^{10}}{\alpha^{n}}+\dfrac{2^{10}}{\alpha^{n+d}}\right)} =
     \frac{1}{1+\dfrac{\alpha^{n}}{\alpha^{n+d}}} =
@@ -268,33 +268,36 @@ Finally, by computing the derivative of Equation~(\ref{eq:cpu_frac_vs_diff}) at 
 
 Since this value is not exactly 10\%, it is possible to correct the original formula according to the precise value. With the new formula, we can compute the \verb|prio_to_weight| table again, and then recompile the kernel with the new table: this way, the ``10\% effect'' would be even more precise.
 
-%correggi da questa sezione 
 \subsection{Assigned time and virtual runtime}
 We have defined a function that assigns a weight to each nice level. Let's see how this weight is used to decide which task to run and for how long. The amount of time that a task can spend on the CPU is determined by 4 values:
 \begin{itemize}
-    \item the \textit{Target latency}, which is a tunable value and it's the period of the scheduler. During this period the scheduler tries to schedule every task once. 
-    \item the \textit{Minimum granularity}, which is the minimum amount of time that can be assigned to a task, this is done to prevent small timeslices that would result in a higher switching cost. It is also used to control the behavior of the scheduler. A small value is better for desktop systems that require low latencies, while a large value is better for server workloads.
-    \item the weight of the task, calculated with the weight function discussed in the previous section.
-    \item the total weights of all the task on the run queue.
+    \item The \textit{target latency}, also called the \textit{scheduler period}. It is defined as a period of time in which each task runs once, for at least a fixed amount of time: the \textit{minimum granularity}.
+    \item The \textit{minimum granularity} is the minimum amount of time that can be assigned to a task. This is done to prevent small timeslices that would result in a higher switching cost. This amount is a tunable value called \verb|sysctl_sched_min_granularity| (see Section \ref{sec:sched_period}), used to control the behavior of the scheduler. A small value is better for desktop systems that require low latencies, while a large value is better for server workloads.
+    \item The weight of the task, calculated with the weight function discussed in the previous section.
+    \item The total weight of all the task on the run queue.
 \end{itemize}
-Given these values, the time assigned to a task is equal to: 
+Given these values, the timeslice assigned to a task is equal to:
 \begin{equation} \label{eq:assigned_time}
     assigned\_time = target\_latency                  \frac{task\_weight}{total\_weight}
 \end{equation}
+Without $target\_latency$, the formula becomes the percentage of CPU time given to the process.
+\begin{equation}
+    CPU_\% = \frac{task\_weight}{total\_weight}
+\end{equation}
 
 \paragraph{Virtual runtime}
-Remember that CFS tries to model an ideal multi-tasking CPU where each task runs for the same amount of time. In order to know which task deserves to be run next, every task keeps track of the total amount of time that is has spent running. The simplest solution for the scheduler would be to choose the task with the smallest total runtime. But this approach ignores the priorities of the tasks. Instead the absolute runtime of each task is weighted with the weight value discussed before. The weighted time is called the virtual runtime, abbreviated to vruntime. The general formula for calculating it is:
+
+Remember that CFS tries to model an ideal multi-tasking CPU where each task runs for the same amount of time. In order to know which task deserves to run next, every task keeps track of the total amount of time that is has spent running. The simplest solution for the scheduler would be to choose the task with the smallest total runtime, but this approach ignores the priorities of the tasks. Instead, the absolute runtime of each task is weighted with the weight value discussed before. The weighted time is called the \textit{virtual runtime}, abbreviated to \textit{vruntime}. The general formula for calculating it is:
 \begin{equation} \label{eq:vruntime}
     vruntime = delta\_exec \frac{weight\_of\_nice\_0}{task\_weight}
 \end{equation}
-Where \verb|delta_exec| is the absolute time that the task spent running and \verb|weight_of_nice_0|, as the name suggests, is the weight corresponding to a task with nice zero.
+Where \verb|delta_exec| is the absolute time that the task spent running, and \verb|weight_of_nice_0| is the weight corresponding to a task with nice zero. 
 
-If the nice value of the task is 0, the fraction has value 1 and the virtual runtime is equivalent to the actual time spent running on the CPU. If the nice value is less than 0, then the virtual runtime will be smaller than the actual runtime. This means that the virtual runtime of an high priority task will increase more slowly than the vruntime of a low priority one. So, in order to keep all the virtual runtimes at the same level the high priority task will have to run for more time. On the other hand, if the nice value is more than 0, the virtual runtime will increase faster.
+For nice values less than 0 the weighting factor is $< 1$: vruntime is less than real time spent and it grows slower than real time. If the nice value is 0, the vruntime is equivalent to the actual time spent running on the CPU. This means that the virtual runtime of an high priority task will increase more slowly than the vruntime of a low priority one. So, in order to keep all the virtual runtimes at the same level, the high priority task will have to run for more time.
 
 \paragraph{Running the next task}
 
-As we said before, the goal of CFS is to be as fair as possible with all the task. This means keeping all the task's vruntime as close as possible to each other. Following this logic, the task that deserves more than anyone to be executed next, is the one with the smallest vruntime.
-%fino a qui
+As stated before, the goal of CFS is to be as fair as possible with all the task. This means keeping all the task's vruntime as close as possible to each other. Following this logic, the task that deserves more than anyone to be executed next is the one with the smallest vruntime.
 
 \subsection{Runqueue}
 When a task goes to sleep, it is removed from the runqueue. While sleeping, the virtual runtime of a task remains the same, while the other tasks will continue to increase their own vruntime. If the task is woken up and re-inserted into the runqueue with the same virtual runtime it had before, it would have a significantly higher priority compared to the task that remained on the runqueue: this creates a situation of unfairness, where a sleeping task gets too much priority.

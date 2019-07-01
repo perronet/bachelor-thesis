@@ -96,16 +96,21 @@ When scheduling, the class list is visited, starting from the higher priority cl
 
 This structure is a good reference to understand the code because it essentially lists all the main scheduler routines, which are covered in the next section.
 
-\paragraph{mm\_struct} %TODO no code, see https://www.tldp.org/LDP/tlk/kernel/processes.html
-%kernel threads have mm at null
-%Need to explain mm_struct and some memory management (virtual memory and address spaces?)
-\mycomment{TODO} mm switched during context switch
+% https://www.tldp.org/LDP/tlk/kernel/processes.html
+\paragraph{mm\_struct} 
+This data structure abstracts the virtual memory of a process. It contains information about the executable image of the process, a pointer to the process's page tables, and a mapping to the virtual memory areas. Figure \ref{img:mm} shows the fundamental fields of the struct.
 
 \begin{figure}[ht]
 \includegraphics[width=\textwidth]{images/mm.jpg}
 \caption{The structures used for virtual memory \url{https://www.tldp.org/LDP/tlk/kernel/processes.html}}
 \label{img:mm}
 \end{figure}
+\verb|mmap| contains a list of virtual memory areas, which can contain the executable code, data, or code from shared libraries.
+This list is actually organized in a binary tree, ordered by memory address, for faster access. These areas are allocated by the process as it runs, for example when it loads code of a shared library. Because it is virtual memory, each process has the illusion that it has the whole memory for itself, and that each time that it allocates memory it gets physically allocated. Such an approach would waste memory: what if the shared library is already loaded in RAM and used by other processes?
+
+For this reason, Linux uses \textit{on-demand paging}. When a process allocates virtual memory, Linux does not actually reserve physical memory for the process. Instead, it describes the virtual memory by creating a new \verb|vm_area_struct| data structure. This is linked into the process's list of virtual memory. When the process attempts to write to a virtual address within that new virtual memory region then the system will page fault. Linux looks to see if the virtual address referenced is in the current process's virtual address space. If it is, Linux creates the appropriate \textit{page table entries} (PTEs) and allocates a physical page of memory for this process. The code or data may need to be brought into that physical page from the filesystem or from the swap disk. The process can then be restarted at the instruction that caused the page fault and, this time as the memory physically exists, it may continue.\cite{tlk}
+
+\verb|mm_struct| has also a role in scheduling, because the \verb|mm|s of the two processes are switched upon context switch (Section TODO). The field \verb|mm| can also be set to \verb|NULL|: in this case the process is a kernel thread, free to use all the kernel space.
 
 \paragraph{procfs}
 The information contained in these structures can be accessed from outside the kernel with specific tools (covered in detail in Chapter \ref{chap:ftrace}). One approach to accomplish this it to use \verb|procfs|. In short, \verb|procfs| is a special filesystem that contains all the kernel information about processes, making it easy to access it from user space. For example, it is possible to gather scheduling information about process with pid 1196 by executing \verb|cat /proc/1196/schedstat|. This gives the following human-readable output:
@@ -262,7 +267,7 @@ There are essentially two ways of prompting a reschedule:
     current is interrupted and the scheduler is invoked to select another process to run
     (usually the process that just became runnable).\cite{cesati} This rescheduling possibility is checked every time that a task is created or woken up.
 \end{itemize}
-The internal working of these two procedures are illustrated, in order, in the two upcoming sections.
+The internal workings of these two procedures is illustrated, in order, in the two upcoming sections. There are other times in which a reschedule is prompted: indeed, \verb|schedule()| could be called like any other function, but this is done rarely in practice.
 
 \subsection{Periodic reschedule}
 We will now analyze in detail how scheduling works and the most important functions involved. In the last section, we saw how the system can perform periodic functions in order to measure time. From the entry point \verb|scheduler_tick()|, the subsequent calls can be traced with \verb|ftrace|: a function/event tracer embedded in the kernel.
@@ -283,15 +288,44 @@ echo > /sys/kernel/debug/tracing/trace
 sleep 3
 cat /sys/kernel/debug/tracing/trace
 \end{codebash}
-
 %show trace starting from the timer interrupt, using function_graph tracer
-%also scheduler_tick()?
-Path that \verb|schedule()| takes. TODO
+With ``\verb|scheduler_tick|'' as input, this is a small piece of the output trace. Next, it is shown what's inside these functions.
 \begin{Verbatim}
-selected schedule() calls from the script here
+0)               |  scheduler_tick() {
+0)   0.238 us    |    _raw_spin_lock();
+0)   0.207 us    |    update_rq_clock.part.84();
+0)               |    task_tick_fair() {
+0)               |      update_curr() {
+0)   0.167 us    |        update_min_vruntime();
+0)   0.305 us    |        cpuacct_charge();
+0)   3.652 us    |      } /* update_curr */
+0)   0.219 us    |      __compute_runnable_contrib();
+0)   0.159 us    |      __compute_runnable_contrib();
+0)   0.114 us    |      intel_pstate_update_util();
+0)   0.263 us    |      update_cfs_shares();
+0)   0.178 us    |      hrtimer_active();
+0) + 15.135 us   |    } /* task_tick_fair */
+0)               |    cpu_load_update_active() {
+0)   0.163 us    |      tick_nohz_tick_stopped();
+0)               |      cpu_load_update() {
+0)   0.178 us    |        sched_avg_update();
+0)   1.927 us    |      } /* cpu_load_update */
+0)   5.132 us    |    } /* cpu_load_update_active */
+0)   0.148 us    |    calc_global_load_tick();
+0)               |    trigger_load_balance() {
+0)   0.400 us    |      idle_cpu();
+0)   2.760 us    |    } /* trigger_load_balance */
+0) + 33.332 us   |  } /* scheduler_tick */
 \end{Verbatim}
+In the following pieces of code, ``\verb|likely()|'' and ``\verb|unlikely()|'' are macros for \verb|gcc|'s built in branch prediction.
+\begin{code}
+// ./include/linux/compiler.h
+#define likely(x)       __builtin_expect(!!(x), 1)
+#define unlikely(x)     __builtin_expect(!!(x), 0)
+\end{code}
+These two macros are used in conditions. They indicate, respectively, that the condition is expected to be true or false. \verb|gcc| will then produce the correct assembly at compile time. If the guess is correct, less CPU cycles are used to choose the branch, but if it's not, the cycles are doubled. The double inversion (\verb|!!|) is to make sure the parameter is binary.
 
-\subsubsection{scheduler\_tick()}
+\subsubsection{scheduler\_tick}
 As stated earlier, this function is called by the interrupt handler at every system tick.
 
 \begin{code}
@@ -456,12 +490,22 @@ If the newly calculated vruntime is also the smallest in the runqueue, the field
 
 It is also possible that a group of tasks has a limit on the amount of CPU it can use. The function \verb|account_cfs_rq_runtime| is specific for groups. It updates \verb|cfs_rq->remaining_runtime|, where \verb|cfs_rq| is, again, the runqueue of the current group; then it triggers a reschedule if the remaining time reaches zero.
 
-\subsubsection{calc\_delta\_fair}TODO
-equation \ref{eq:vruntime}
+\subsubsection{calc\_delta\_fair and \_\_calc\_delta}
+This function and its subfunction are a mere application of equation \ref{eq:vruntime}. Like the formula, this function weights the delta. \verb|__calc_delta| is where it's applied: it also takes the same parameters as the equation. 
 \begin{code}
-__calc_delta(delta, NICE_0_LOAD, &se->load);
+// ./kernel/sched/fair.c
+/*
+ * delta /= w
+ */
+static inline u64 calc_delta_fair(u64 delta, struct sched_entity *se)
+{
+	if (unlikely(se->load.weight != NICE_0_LOAD))
+		delta = __calc_delta(delta, NICE_0_LOAD, &se->load);
+
+	return delta;
+}
 \end{code}
-\subsubsection{check\_preempt\_tick} %TODO
+\subsubsection{check\_preempt\_tick}
 
 \verb|check_preempt_tick()| is called at the end of \verb|entity_tick()|, after all the fields of the current process have been updated with \verb|update_curr()|. Its job is to check if the current task has to be preempted. 
 \begin{code}
@@ -506,14 +550,69 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 		resched_curr(rq_of(cfs_rq));
 }
 \end{code}
-%TODO The  scheduler  has  a  tunable  parameter  called sysctl_sched_min_granularity
-The first step is calculating \verb|ideal_runtime|. As the name suggests, this is the timeslice assigned to the task: remember that CFS's timeslice always varies dynamically with vruntime. \verb|sched_slice()| internally calculates \newline \verb|__calc_delta(slice, se->load.weight, load)| where the first argument is the target latency, the second is the weight of the entity and the third is the total load of the current runqueue. This function calculates the \verb|assigned_time| of equation \ref{eq:assigned_time}.
+The first step is calculating \verb|ideal_runtime|. As the name suggests, this is the timeslice assigned to the task: remember that CFS's timeslice always varies dynamically.
 
 If the task has run for more than the ideal runtime, the function \verb|resched_curr()| is called and it will cause the preemption of the task. The other way this function can trigger a reschedule, is if the difference between the virtual runtime of the current task and the smallest virtual runtime in the runqueue is bigger than the ideal runtime.
-%what is the difference between the 2 cases? just the buddies?
+
+\paragraph{sched\_slice}
+\begin{code}
+/*
+ * We calculate the wall-time slice from the period by taking a part
+ * proportional to the weight.
+ *
+ * s = p*P[w/rw]
+ */
+static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
+{
+	u64 slice = __sched_period(cfs_rq->nr_running + !se->on_rq);
+
+	for_each_sched_entity(se) {
+		struct load_weight *load;
+		struct load_weight lw;
+
+		cfs_rq = cfs_rq_of(se);
+		load = &cfs_rq->load;
+
+		if (unlikely(!se->on_rq)) {
+			lw = cfs_rq->load;
+
+			update_load_add(&lw, se->load.weight);
+			load = &lw;
+		}
+		slice = __calc_delta(slice, se->load.weight, load);
+	}
+	return slice;
+}
+\end{code}
+\verb|sched_slice()| first calculates $target\_latency$ of equation \ref{eq:assigned_time}---also known as the \textit{scheduler period}. Remember that this value is defined as a period of time in which each task runs once, for at least \verb|sysctl_sched_min_granularity| nanoseconds. It is calculated through \verb|__sched_period()|.\label{sec:sched_period}
+Here, two important scheduler tunables are used:
+\begin{itemize}
+    \item \verb|sysctl_sched_min_granularity| -- the minimum time a task is be allowed to run on a CPU before being preempted.
+    \item \verb|sysctl_sched_latency| -- the default scheduler period.
+\end{itemize}
+\begin{code}
+/*
+ * The idea is to set a period in which each task runs once.
+ *
+ * When there are too many tasks (sched_nr_latency) we have to stretch
+ * this period because otherwise the slices get too small.
+ *
+ * p = (nr <= nl) ? l : l*nr/nl
+ */
+static u64 __sched_period(unsigned long nr_running)
+{
+	if (unlikely(nr_running > sched_nr_latency))
+		return nr_running * sysctl_sched_min_granularity;
+	else
+		return sysctl_sched_latency;
+}
+\end{code}
+Lastly, the actual timeslice is calculated through \verb|__calc_delta()| on line 24: the result is the \verb|assigned_time| of equation \ref{eq:assigned_time}. Here, the first argument is the target latency, the second is the weight of the entity and the third is the total load of the current runqueue.
+
+It may seem strange that \verb|__calc_delta()| is used to compute both the timeslice and vruntime (Equations \ref{eq:assigned_time} and \ref{eq:vruntime}), but the two formulas have the same structure, just with different arguments.
 
 \paragraph{resched\_curr}\label{trace:wake_idle_without_ipi}
-Finally, this function sets the \verb|TIF_NEED_RESCHED| flag, located in the flags field of the struct \verb|thread_info| (Section \ref{sec:thread_info}). 
+Finally, this function (called in \verb|check_preempt_tick()|) sets the \verb|TIF_NEED_RESCHED| flag, located in the flags field of the struct \verb|thread_info| (Section \ref{sec:thread_info}). 
 This flag indicates that the current task needs to be rescheduled. When resuming the execution of a user process, the flag is checked and if it is set, the schedule function is called.
 
 \subsection{Reschedule when adding a task to the runqueue}
@@ -592,7 +691,6 @@ Whether the task was just created or it was woken up from sleep, his \verb|task_
     \item Updates the load statistics of the entity and its group
     \item Calls \verb|__enqueue_entity()|, which inserts the entity of the \verb|task_struct| in the red-black tree representing the runqueue.
 \end{itemize}
-
 % TODO
 % \subsubsection{schedule()}
 
