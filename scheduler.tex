@@ -76,18 +76,16 @@ Each class has its code, implementing its own algorithm. Within each class, poli
 \verb|SCHED_IDLE| is for tasks with very low priority, almost any task can preempt tasks with this policy.
 
 \paragraph{Priorities} %static and dynamic priorities?
-Each task has a priority associated with it, the first priority levels
-corresponds to real-time tasks and are scheduled with the
+Each task has a priority associated with it. The first priority levels
+corresponds to real-time tasks, which are scheduled with the
 \verb|SCHED_FIFO| or \verb|SCHED_RR| policy. Normal tasks are
 scheduled with the \verb|SCHED_NORMAL|, \verb|SCHED_BATCH| and
-\verb|SCHED_IDLE|, these have a priority (called nice) that ranges
+\verb|SCHED_IDLE|. These have a priority called \textit{nice} that ranges
 from $-20$ to $19$, $-20$ being the highest priority and $+19$ the
-lowest. The behaviour of different nice values depends on the version
-of the scheduler.
+lowest. The reason why it's called ``nice'' is that it represents how nice the process is being to all the others: being very nice (positive nice) means having a low priority.
 
-%EXTRA PARAGRAPH?
-%this has been a problem for linux for years (advantaging servers)
-%today, tweaks are needed to optimize for a workload
+The behaviour of different nice values depends on the version
+of the scheduler. This has been a problem for Linux for years, because nice's behaviour used to advantage servers over desktop\cite{nice_design}.
 
 \label{sec:cfs}
 \section{Prior to CFS}
@@ -100,24 +98,26 @@ Prior to the introduction of the O(1) scheduler, there was another version of th
 This was achieved using only algorithms with constant complexity $O(1)$. Meaning that the $O(1)$ scheduler does not have to traverse all the list of runnable tasks when deciding which one to run. Instead, this decision always takes a constant amount of time, regardless of the number of tasks.
 
 \paragraph{Priority} %What is the priority of a task
-Each user task has a priority which consists of a static and a bonus priority. The static priority, which corresponds to the \textit{nice} value, can have a value from $-20$ to $19$, $-20$ being the highest priority and 19 the lowest. The bonus ranges from $-5$ to $+5$ and it is determined by the interactiveness of the task: if a task spends a large amount of time sleeping, the scheduler will boost its priority, on the other hand, if a task doesn't sleep much, it will get penalized. %TODO explain nice meaning
+Each user task has a priority which consists of a static and a bonus priority. The static priority, which corresponds to the nice value, can have a value from $-20$ to $19$. The bonus ranges from $-5$ to $+5$ and it is determined by the interactiveness of the task: if a task spends a large amount of time sleeping, the scheduler will boost its priority, on the other hand, if a task doesn't sleep much, it will get penalized. 
 The static priority and the bonus are then added to determine the dynamic priority, which is the priority looked by the scheduler when choosing the next process to run.
 
 \paragraph{Timeslice} %How are timeslices calulated
 The $O(1)$ scheduler is based on the concept of timeslice, this is the amount of time that a task runs on the CPU during a cycle. A new cycle begins when every task has been moved to the expired queue. Each priority level is mapped to a different timeslice: higher levels get mapped to more time while lower levels get mapped to less time. The timeslice can be expressed as a time quantity, but it's more usual to represent it as a percentage of the total time of a cycle.
 
 %http://ijssst.info/Vol-15/No-3/data/3857a668.pdf Cita questo (on the fairness of O(1)), cerca heuristics
-\paragraph{Interactive tasks and heuristics} %TODO talk about heuristics! (sleep time etc)
-A process that is marked as interactive will be reinserted in the
+% talk about heuristics! (sleep time etc)
+\paragraph{Interactive tasks and heuristics} 
+Dynamic priority bonuses and penalties are based on interactivity heuristics. This heuristic is implemented by keeping track of how long a task goes to sleep.\cite{O(1)}
+A process that is marked as interactive (\verb|SCHED_NORMAL| rather than \verb|SCHED_BATCH|) will be reinserted in the
 active queue after it has expired its current timeslice. This is done 
 to improve the response time of the system. A task is
-marked as interactive depending on its dynamic priority and its nice
+also marked as interactive depending on its dynamic priority and its nice
 value. It is easier for a task with an higher priority to become interactive compared to task with a lower one. A task with a nice value of $-20$ it's marked as interactive
 even if it has a dynamic priority of $+3$, while a task with a nice
 value of $0$ has to have a dynamic priority of $-2$. With a nice level
 of $+19$ it is impossible for a task to be marked as interactive, independently from the dynamic priority. %hardcoded values, arbitrary
 
-This system is the biggest weakness of the O(1) scheduler: it generated unpredictable behavior and could cause some tasks to be marked as interactive even when they were not. Furthermore, the different kinds of complex heuristics made the code bigger and harder to understand and maintain.
+This approach is the biggest weakness of the O(1) scheduler: it generated unpredictable behavior and could cause some tasks to be marked as interactive even when they were not. Furthermore, the different kinds of complex heuristics made the code bigger and harder to understand and maintain.
 
 % www.kernel.org/doc/Documentation/scheduler/sched-nice-design.txt
 \paragraph{Nice levels} 

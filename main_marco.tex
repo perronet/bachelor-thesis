@@ -79,7 +79,7 @@ linenos
 \begin{thebibliography}{}
 \bibitem{ritchie}
 AT\&T Bell Labs promotional film, circa 1980
-\textit{Ken Thompson and Dennis Ritchie Explain UNIX (Bell Labs)} %well, this is a youtube video, should i even cite this?
+\textit{Ken Thompson and Dennis Ritchie Explain UNIX (Bell Labs)} %well, this is a youtube video, should I even cite this?
 
 \bibitem{cesati}
 Marco Cesati and Daniel P. Bovet.
@@ -88,120 +88,71 @@ O'reilly, 2005.
 
 \bibitem{torvalds}
 Linus Trovalds.\\
-\texttt{www.realworldtech.com/forum/?threadid=65915\&curpostid=65936}
+\href{https://www.realworldtech.com/forum/?threadid=65915\&curpostid=65936}{\texttt{www.realworldtech.com/forum/?threadid=65915\&curpostid=65936}}
 
 \bibitem{con}
 Con Kolivas.
 \textit{RSDL completely fair starvation free interactive cpu scheduler}.
 Linux kernel mailing list, 2007.
-\texttt{lwn.net/Articles/224654/}
+\href{https://lwn.net/Articles/224654/}{\texttt{lwn.net/Articles/224654/}}
 
 \bibitem{ingo}
 Ingo Molnar.
 \textit{Modular Scheduler Core and Completely Fair Scheduler}.
 Linux kernel mailing list, 2007. 
-\texttt{www.lwn.net/Articles/230501/}
+\href{https://www.lwn.net/Articles/230501/}{\texttt{www.lwn.net/Articles/230501/}}
 
 \bibitem{cfs_design}
 \textit{Documentation of the Linux Kernel}\\
-\texttt{www.kernel.org/doc/Documentation/scheduler/sched-design-CFS.txt}
+\href{https://www.kernel.org/doc/Documentation/scheduler/sched-design-CFS.txt}{\texttt{www.kernel.org/doc/Documentation/scheduler/sched-design-CFS.txt}}
 
 \bibitem{nice_design}
 \textit{Documentation of the Linux Kernel}\\
-\texttt{www.kernel.org/doc/Documentation/scheduler/sched-nice-design.txt}
+\href{https://www.kernel.org/doc/Documentation/scheduler/sched-nice-design.txt}{\texttt{www.kernel.org/doc/Documentation/scheduler/sched-nice-design.txt}}
 
 \bibitem{O(1)}
 \textit{On the Fairness of Linux O(1) Scheduler.} 2014.\\
-\url{http://ijssst.info/Vol-15/No-3/data/3857a668.pdf}
+\href{http://ijssst.info/Vol-15/No-3/data/3857a668.pdf}{\texttt{ijssst.info/Vol-15/No-3/data/3857a668.pdf}}
 
 \bibitem{amdahl}
 Gene M.\ Amdahl.
 \textit{Validity of the single processor approach to achieving large scale
 computing capabilities}.
 1967.\\
-\texttt{http://www-inst.eecs.berkeley.edu/\textasciitilde n252/paper/Amdahl.pdf}
+\href{http://www-inst.eecs.berkeley.edu/\textasciitilde n252/paper/Amdahl.pdf}{\texttt{www-inst.eecs.berkeley.edu/\textasciitilde n252/paper/Amdahl.pdf}}
 
 \bibitem{tlk}
 David Rusling.
 \textit{The Linux Kernel.}
 1999.\\
-\url{https://www.tldp.org/LDP/tlk/}
+\href{https://www.tldp.org/LDP/tlk/}{\texttt{www.tldp.org/LDP/tlk/}}
 
 \bibitem{secrets}
 Steven Rostedt.
 \textit{Secrets of the Ftrace function tracer}.
 lwn.net, 2010.
-\texttt{lwn.net/Articles/370423/}
+\href{https://lwn.net/Articles/370423/}{\texttt{lwn.net/Articles/370423/}}
 
 \bibitem{trace_debugging}
 Steven Rostedt.
 \textit{Debugging the kernel using Ftrace}.
 lwn.net, 2009.
-\texttt{lwn.net/Articles/365835/}
+\href{https://lwn.net/Articles/365835/}{\texttt{lwn.net/Articles/365835/}}
 
 \bibitem{trace_event}
 Steven Rostedt.
 \textit{Using the TRACE\_EVENT() macro}.
 lwn.net, 2010.
-\texttt{lwn.net/Articles/383362/}.\\
+\href{https://lwn.net/Articles/383362/}{\texttt{lwn.net/Articles/383362/}}.\\
 The article is a follow up to:\\
-Part 1 -- \texttt{lwn.net/Articles/379903/}.\\
-Part 2 -- \texttt{lwn.net/Articles/381064/}.
+Part 1 -- \href{https://lwn.net/Articles/379903/}{\texttt{lwn.net/Articles/379903/}}.\\
+Part 2 -- \href{https://lwn.net/Articles/381064/}{\texttt{lwn.net/Articles/381064/}}.
 \end{thebibliography}
 
 \end{document}
-\chapter{Testing}
-%just testing equations etc
-\begin{equation}
-    nice\in[-19 \dots 20]
-\end{equation}
-\begin{equation}
-    timeslice\in[granularity_{min} \dots period]
-\end{equation}
-\begin{equation}
-    weight=\frac{1024}{1.25^{nice}}
-\end{equation}
-\begin{equation}
-    timeslice(task)=period\frac{weight(task)}{weight(rq)}
-\end{equation}
-\begin{equation}
-    CPU_\%(task)=\frac{weight(task)}{weight(rq)}
-\end{equation}
-\begin{equation} \label{eq_gran}
-    granularity=\frac{latency}{n_{running}} - \frac{latency}{\cfrac{n_{running}}{n_{running}}}
-\end{equation}
-The equation \ref{eq_gran} expresses the relation between latency and granularity.
-
-In the code these values are called respectively \verb|sysctl_sched_latency| and \verb|sysctl_sched_min_granularity|.
-\begin{code}
-static u64 __sched_period(unsigned long nr_running){
-if(unlikely(nr_running > sched_nr_latency))
-	return nr_running * sysctl_sched_min_granularity;
-else
-	return sysctl_sched_latency;
-}
-\end{code}
-This is how the scheduling period is calculated.\\ 
-\verb|sched_nr_latency| is simply $\cfrac{latency}{granularity_{min}}$.
-
-\begin{code}
-#define likely(x)       __builtin_expect(!!(x), 1)
-#define unlikely(x)     __builtin_expect(!!(x), 0)
-\end{code}
-Branch prediction macros definition (\verb|include/linux/compiler.h|), the double inversion is to make sure the parameter is binary
-
-\begin{equation}
-    lantency = 6ms(1 + \log_2 n_{CPU})
-\end{equation}
-Default latency.
-\begin{equation}
-    granularity = 0.75ms(1 + \log_2 n_{CPU})
-\end{equation}
-Default granularity.
-
 %DELETED PARTS:
 %%%%%%%%%%%%%%%%
-\subsection{Source files organization} %Maybe move this section https://notes.shichao.io/lkd/ch2/#the-kernel-source-tree
+\subsection{Source files organization}
 Most header files included throughout the kernel code are located in the \verb|include/linux| directory. The architecture independent core logic of the kernel can be found in \verb|kernel|. Some of the source files located here have a 1--1 correspondence with the header files in \verb|./include/linux|, in general all these headers will get included within these source files.\\
 Some of the most important folders found in the root directory are:
 \begin{itemize}

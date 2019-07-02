@@ -26,7 +26,6 @@ kernel/hung_task.c:113: trace_sched_process_hang(t);
 
 kernel/kthread.c:543: trace_sched_kthread_stop(k);
 kernel/kthread.c:554: trace_sched_kthread_stop_ret(ret);
-kernel/kthread.c:554: trace_sched_kthread_stop_ret(ret);
 
 kernel/sched/core.c:1171: trace_sched_migrate_task(p, new_cpu);
 kernel/sched/core.c:1295: trace_sched_swap_numa(cur, arg.src_cpu, p, arg.dst_cpu);
@@ -38,7 +37,6 @@ kernel/sched/core.c:473: trace_sched_wake_idle_without_ipi(cpu);
 kernel/sched/core.c:545: trace_sched_wake_idle_without_ipi(cpu);
 kernel/sched/core.c:1970: trace_sched_waking(p);
 kernel/sched/core.c:2100: trace_sched_waking(p);
-kernel/sched/core.c:2425: trace_sched_wakeup_new(p);
 kernel/sched/core.c:2425: trace_sched_wakeup_new(p);
 kernel/sched/core.c:3469: trace_sched_switch(preempt, prev, next);
 kernel/sched/core.c:3797: trace_sched_pi_setprio(p, pi_task);
@@ -52,7 +50,7 @@ kernel/sched/fair.c:925: trace_sched_stat_sleep(tsk, delta);
 kernel/sched/fair.c:944: trace_sched_stat_iowait(tsk, delta);
 kernel/sched/fair.c:947: trace_sched_stat_blocked(tsk, delta);
 \end{Verbatim}
-There are 24 events and 31 tracepoints where they are used. The output shows the tracepoints with their respective source file and line. Thanks to this output and the developer's comments, it is now easier to understand the purpose of each event. For each event there are listed: 
+There are 24 events and 29 tracepoints where they are used. The output shows the tracepoints with their respective source file and line. Thanks to this output and the developer's comments, it is now easier to understand the purpose of each event. For each event there are listed: 
 \begin{enumerate}
     \item Its parameters
     \item The information printed in the trace output
@@ -81,9 +79,40 @@ Tracepoint for a task being migrated.
 
 \textbf{Usages}
 \begin{code}
-kernel/sched/core.c:1171
+// ./kernel/sched/core.c:1171
+void set_task_cpu(struct task_struct *p, unsigned int new_cpu){
+#ifdef CONFIG_SCHED_DEBUG // Debug messages
+	/*
+	 * We should never call set_task_cpu() on a blocked task,
+	 * ttwu() will sort out the placement.
+	 */
+	WARN_ON_ONCE(p->state != TASK_RUNNING && p->state != TASK_WAKING &&
+			!p->on_rq);
+        // ...
+	WARN_ON_ONCE(p->state == TASK_RUNNING &&
+		     p->sched_class == &fair_sched_class &&
+		     (p->on_rq && !task_on_rq_migrating(p)));
+
+        // ...
+	/*
+	 * Clearly, migrating tasks to offline CPUs is a fairly daft thing.
+	 */
+	WARN_ON_ONCE(!cpu_online(new_cpu));
+#endif 
+
+	trace_sched_migrate_task(p, new_cpu);
+
+	if (task_cpu(p) != new_cpu) {
+		if (p->sched_class->migrate_task_rq)
+			p->sched_class->migrate_task_rq(p, new_cpu);
+		p->se.nr_migrations++;
+		rseq_migrate(p);
+		perf_event_task_migrate(p);
+	}
+
+	__set_task_cpu(p, new_cpu);
+}
 \end{code}
-% set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 Migrate a task to \verb|new_cpu|.
   
 \paragraph{\texttt{trace\_sched\_swap\_numa}}
@@ -107,7 +136,48 @@ Migrate a task to \verb|new_cpu|.
 
 \textbf{Usages}
 \begin{code}
-kernel/sched/core.c:1295
+// ./kernel/sched/core.c:1295
+struct migration_swap_arg {
+	struct task_struct *src_task, *dst_task;
+	int src_cpu, dst_cpu;
+};
+/*
+ * Cross migrate two tasks
+ */
+int migrate_swap(struct task_struct *cur, struct task_struct *p,
+		int target_cpu, int curr_cpu){
+	struct migration_swap_arg arg;
+	int ret = -EINVAL;
+
+	arg = (struct migration_swap_arg){
+		.src_task = cur,
+		.src_cpu = curr_cpu,
+		.dst_task = p,
+		.dst_cpu = target_cpu,
+	};
+
+	if (arg.src_cpu == arg.dst_cpu)
+		goto out;
+
+	/*
+	 * These three tests are all lockless; this is OK since all of them
+	 * will be re-checked with proper locks held further down the line.
+	 */
+	if (!cpu_active(arg.src_cpu) || !cpu_active(arg.dst_cpu))
+		goto out;
+
+	if (!cpumask_test_cpu(arg.dst_cpu, &arg.src_task->cpus_allowed))
+		goto out;
+
+	if (!cpumask_test_cpu(arg.src_cpu, &arg.dst_task->cpus_allowed))
+		goto out;
+
+	trace_sched_swap_numa(cur, arg.src_cpu, p, arg.dst_cpu); // Tracepoint
+	ret = stop_two_cpus(arg.dst_cpu, arg.src_cpu, migrate_swap_stop, &arg);
+
+out:
+	return ret;
+}
 \end{code}
 
 \paragraph{\texttt{trace\_sched\_wait\_task}}
@@ -127,11 +197,117 @@ Tracepoint for waiting on task to unschedule:
 
 \textbf{Usages}
 \begin{code}
+// ./kernel/sched/core.c:1358
+/*
+ * wait_task_inactive - wait for a thread to unschedule.
+ *
+ * If @match_state is nonzero, it's the @p->state value just checked and
+ * not expected to change.  If it changes, i.e. @p might have woken up,
+ * then return zero.  When we succeed in waiting for @p to be off its CPU,
+ * we return a positive number (its total switch count).  If a second call
+ * a short while later returns the same number, the caller can be sure that
+ * @p has remained unscheduled the whole time.
+ *
+ * The caller must ensure that the task *will* unschedule sometime soon,
+ * else this function might spin for a *long* time. This function can't
+ * be called with interrupts off, or it may introduce deadlock with
+ * smp_call_function() if an IPI is sent by the same process we are
+ * waiting to become inactive.
+ */
+unsigned long wait_task_inactive(struct task_struct *p, long match_state){
+	int running, queued;
+	struct rq_flags rf;
+	unsigned long ncsw;
+	struct rq *rq;
 
+	for (;;) {
+		/*
+		 * We do the initial early heuristics without holding
+		 * any task-queue locks at all. We'll only try to get
+		 * the runqueue lock when things look like they will
+		 * work out!
+		 */
+		rq = task_rq(p);
+
+		/*
+		 * If the task is actively running on another CPU
+		 * still, just relax and busy-wait without holding
+		 * any locks.
+		 *
+		 * NOTE! Since we don't hold any locks, it's not
+		 * even sure that "rq" stays as the right runqueue!
+		 * But we don't care, since "task_running()" will
+		 * return false if the runqueue has changed and p
+		 * is actually now running somewhere else!
+		 */
+		while (task_running(rq, p)) {
+			if (match_state && unlikely(p->state != match_state))
+				return 0;
+			cpu_relax();
+		}
+
+		/*
+		 * Ok, time to look more closely! We need the rq
+		 * lock now, to be *sure*. If we're wrong, we'll
+		 * just go back and repeat.
+		 */
+		rq = task_rq_lock(p, &rf);
+		trace_sched_wait_task(p); // Tracepoint
+		running = task_running(rq, p);
+		queued = task_on_rq_queued(p);
+		ncsw = 0;
+		if (!match_state || p->state == match_state)
+			ncsw = p->nvcsw | LONG_MIN; /* sets MSB */
+		task_rq_unlock(rq, p, &rf);
+
+		/*
+		 * If it changed from the expected state, bail out now.
+		 */
+		if (unlikely(!ncsw))
+			break;
+
+		/*
+		 * Was it really running after all now that we
+		 * checked with the proper locks actually held?
+		 *
+		 * Oops. Go back and try again..
+		 */
+		if (unlikely(running)) {
+			cpu_relax();
+			continue;
+		}
+
+		/*
+		 * It's not enough that it's not actively running,
+		 * it must be off the runqueue _entirely_, and not
+		 * preempted!
+		 *
+		 * So if it was still runnable (but just not actively
+		 * running right now), it's preempted, and we should
+		 * yield - it could be a while.
+		 */
+		if (unlikely(queued)) {
+			ktime_t to = NSEC_PER_SEC / HZ;
+
+			set_current_state(TASK_UNINTERRUPTIBLE);
+			schedule_hrtimeout(&to, HRTIMER_MODE_REL);
+			continue;
+		}
+
+		/*
+		 * Ahh, all good. It wasn't running, and it wasn't
+		 * runnable, which means that it will never become
+		 * running in the future either. We're all done!
+		 */
+		break;
+	}
+
+	return ncsw;
+}
 \end{code}
 
 \paragraph{\texttt{trace\_sched\_wakeup}}
-Tracepoint called when the task is actually woken; $p->state == TASK\_RUNNING$. It it not always called from the waking context.
+Tracepoint called when the task is actually woken\\ (\verb|p->state == TASK\_RUNNING|). It it not always called from the waking context.
 
 \textbf{Parameters}
 \begin{itemize}
@@ -149,10 +325,42 @@ Tracepoint called when the task is actually woken; $p->state == TASK\_RUNNING$. 
 
 \textbf{Usages}
 \begin{code}
-./kernel/sched/core.c:1659
+// ./kernel/sched/core.c:1659
+/*
+ * Mark the task runnable and perform wakeup-preemption.
+ */
+static void ttwu_do_wakeup(struct rq *rq, struct task_struct *p, int wake_flags,
+			   struct rq_flags *rf){
+	check_preempt_curr(rq, p, wake_flags);
+	p->state = TASK_RUNNING;
+	trace_sched_wakeup(p); // Tracepoint
+
+#ifdef CONFIG_SMP
+	if (p->sched_class->task_woken) {
+		/*
+		 * Our task @p is fully woken up and running; so its safe to
+		 * drop the rq->lock, hereafter rq is only used for statistics.
+		 */
+		rq_unpin_lock(rq, rf);
+		p->sched_class->task_woken(rq, p);
+		rq_repin_lock(rq, rf);
+	}
+
+	if (rq->idle_stamp) {
+		u64 delta = rq_clock(rq) - rq->idle_stamp;
+		u64 max = 2*rq->max_idle_balance_cost;
+
+		update_avg(&rq->avg_idle, delta);
+
+		if (rq->avg_idle > max)
+			rq->avg_idle = max;
+
+		rq->idle_stamp = 0;
+	}
+#endif
+}
 \end{code}
-Mark the task runnable and perform wakeup-preemption.
-Section \ref{trace:sched_wakeup}
+In this point in the code, the task is marked as runnable and then wakeup preemption is performed. ``Wakeup preemption'' refers to the kind of preemption discussed in Section \ref{sec:runqueue_wakeup_reschedule}, where this event was also mentioned (Subsection "A task is woken up").
   
 \paragraph{\texttt{trace\_sched\_wake\_idle\_without\_ipi}}
 Tracepoint for waking a polling cpu without an IPI.
@@ -169,13 +377,23 @@ Tracepoint for waking a polling cpu without an IPI.
 
 \textbf{Usages}
 \begin{code}
-
+// ./kernel/sched/core.c:473:
+\end{code}
+\begin{code}
+// ./kernel/sched/core.c:545:
+\end{code}
+\begin{code}
+// ./kernel/sched/core.c:1798: 
+\end{code}
+\begin{code}
+// ./kernel/sched/core.c:1813:
 \end{code}
 
-Called int the \verb|resched_curr| function in Section \ref{trace:wake_idle_without_ipi}.
+Called in the \verb|resched_curr| function in Section \ref{trace:wake_idle_without_ipi}.
 
 \paragraph{\texttt{trace\_sched\_waking}}
-Tracepoint called when waking a task; this tracepoint is guaranteed to be called from the waking context.
+Tracepoint called when waking a task; this tracepoint is guaranteed to be called from the waking context. This means that the task will be in the \verb|TASK_WAKING| state.
+This event was mentioned in Section \ref{trace:sched_waking} "A task is woken up".
 
 \textbf{Parameters}
 \begin{itemize}
@@ -193,15 +411,114 @@ Tracepoint called when waking a task; this tracepoint is guaranteed to be called
 
 \textbf{Usages}
 \begin{code}
-./kernel/sched/core.c:1970
+// ./kernel/sched/core.c:1970
+/**
+ * try_to_wake_up - wake up a thread
+ * @p: the thread to be awakened
+ * @state: the mask of task states that can be woken
+ * @wake_flags: wake modifier flags (WF_*)
+ *
+ * If (@state & @p->state) @p->state = TASK_RUNNING.
+ *
+ * If the task was not queued/runnable, also place it back on a runqueue.
+ *
+ * Atomic against schedule() which would dequeue a task, also see
+ * set_current_state().
+ *
+ * This function executes a full memory barrier before accessing the task
+ * state; see set_current_state().
+ *
+ * Return: %true if @p->state changes (an actual wakeup was done),
+ *	   %false otherwise.
+ */
+static int
+try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags){
+	unsigned long flags;
+	int cpu, success = 0;
+
+	/*
+	 * If we are going to wake up a thread waiting for CONDITION we
+	 * need to ensure that CONDITION=1 done by the caller can not be
+	 * reordered with p->state check below. This pairs with mb() in
+	 * set_current_state() the waiting thread does.
+	 */
+	raw_spin_lock_irqsave(&p->pi_lock, flags);
+	smp_mb__after_spinlock();
+	if (!(p->state & state))
+		goto out;
+
+	trace_sched_waking(p); // Tracepoint
+
+	/* We're going to change ->state: */
+	success = 1;
+	cpu = task_cpu(p);
+        // ...
+	smp_rmb();
+	if (p->on_rq && ttwu_remote(p, wake_flags))
+		goto stat;
+        // ...
+	ttwu_queue(p, cpu, wake_flags);
+stat:
+	ttwu_stat(p, cpu, wake_flags);
+out:
+	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
+
+	return success;
+}
 \end{code}
 try\_to\_wake\_up - wake up a thread
 \begin{code}
-./kernel/sched/core.c:2100
+// ./kernel/sched/core.c:2100
+/**
+ * try_to_wake_up_local - try to wake up a local task with rq lock held
+ * @p: the thread to be awakened
+ * @rf: request-queue flags for pinning
+ *
+ * Put @p on the run-queue if it's not already there. The caller must
+ * ensure that this_rq() is locked, @p is bound to this_rq() and not
+ * the current task.
+ */
+static void try_to_wake_up_local(struct task_struct *p, struct rq_flags *rf){
+	struct rq *rq = task_rq(p);
+
+	if (WARN_ON_ONCE(rq != this_rq()) ||
+	    WARN_ON_ONCE(p == current))
+		return;
+
+	lockdep_assert_held(&rq->lock);
+
+	if (!raw_spin_trylock(&p->pi_lock)) {
+		/*
+		 * This is OK, because current is on_cpu, which avoids it being
+		 * picked for load-balance and preemption/IRQs are still
+		 * disabled avoiding further scheduler activity on it and we've
+		 * not yet picked a replacement task.
+		 */
+		rq_unlock(rq, rf);
+		raw_spin_lock(&p->pi_lock);
+		rq_relock(rq, rf);
+	}
+
+	if (!(p->state & TASK_NORMAL))
+		goto out;
+
+	trace_sched_waking(p); // Tracepoint
+
+	if (!task_on_rq_queued(p)) {
+		if (p->in_iowait) {
+			delayacct_blkio_end(p);
+			atomic_dec(&rq->nr_iowait);
+		}
+		ttwu_activate(rq, p, ENQUEUE_WAKEUP | ENQUEUE_NOCLOCK);
+	}
+
+	ttwu_do_wakeup(rq, p, 0, rf);
+	ttwu_stat(p, smp_processor_id(), 0);
+out:
+	raw_spin_unlock(&p->pi_lock);
+}
 \end{code}
 try\_to\_wake\_up\_local - try to wake up a local task with rq lock held
-
-Section \ref{trace:sched_waking}
 
 \paragraph{\texttt{trace\_sched\_wakeup\_new}}
 Tracepoint for waking up a new task:
@@ -222,17 +539,58 @@ Tracepoint for waking up a new task:
 
 \textbf{Usages}
 \begin{code}
-./kernel/sched/core.c:2425
-\end{code}
-\verb|wake_up_new_task| - wake up a newly created task for the first time.
-This function will do some initial scheduler statistics housekeeping
-that must be done for every newly created context, then puts the task
-on the runqueue and wakes it.
+// ./kernel/sched/core.c:2425
+/*
+ * wake_up_new_task - wake up a newly created task for the first time.
+ *
+ * This function will do some initial scheduler statistics housekeeping
+ * that must be done for every newly created context, then puts the task
+ * on the runqueue and wakes it.
+ */
+void wake_up_new_task(struct task_struct *p){
+	struct rq_flags rf;
+	struct rq *rq;
 
-Called int the \verb|| function in Section \ref{trace:sched_wakeup_new}.
+	raw_spin_lock_irqsave(&p->pi_lock, rf.flags);
+	p->state = TASK_RUNNING;
+#ifdef CONFIG_SMP
+	/*
+	 * Fork balancing, do it here and not earlier because:
+	 *  - cpus_allowed can change in the fork path
+	 *  - any previously selected CPU might disappear through hotplug
+	 *
+	 * Use __set_task_cpu() to avoid calling sched_class::migrate_task_rq,
+	 * as we're not fully set-up yet.
+	 */
+	p->recent_used_cpu = task_cpu(p);
+	__set_task_cpu(p, select_task_rq(p, task_cpu(p), SD_BALANCE_FORK, 0));
+#endif
+	rq = __task_rq_lock(p, &rf);
+	update_rq_clock(rq);
+	post_init_entity_util_avg(&p->se);
+
+	activate_task(rq, p, ENQUEUE_NOCLOCK);
+	p->on_rq = TASK_ON_RQ_QUEUED;
+	trace_sched_wakeup_new(p); // Tracepoint
+	check_preempt_curr(rq, p, WF_FORK);
+#ifdef CONFIG_SMP
+	if (p->sched_class->task_woken) {
+		/*
+		 * Nothing relies on rq->lock after this, so its fine to
+		 * drop it.
+		 */
+		rq_unpin_lock(rq, &rf);
+		p->sched_class->task_woken(rq, p);
+		rq_repin_lock(rq, &rf);
+	}
+#endif
+	task_rq_unlock(rq, p, &rf);
+}
+\end{code}
+This function performs wakeup preemption for newly created tasks; it is called the first time a process wakes up. This event was mentioned in Section \ref{trace:sched_wakeup_new} "A new process is created".
    
 \paragraph{\texttt{trace\_sched\_switch}}
-Tracepoint for task switches, performed by the scheduler:
+Tracepoint for task switches, performed by the scheduler.
 
 \textbf{Parameters}
 \begin{itemize}
@@ -253,11 +611,115 @@ Tracepoint for task switches, performed by the scheduler:
 \end{itemize}
 
 \textbf{Usages}
+
+The call chain is:
+\begin{enumerate}
+    \item \verb|schedule()|
+    \item \verb|__schedule()|
+    \item \verb|context_switch()|
+\end{enumerate}
+The tracepoint is in \verb|__schedule()|, just before calling \verb|context_switch()|.
 \begin{code}
-./kernel/sched/core.c:3469
+asmlinkage __visible void __sched schedule(void) {
+	struct task_struct *tsk = current;
+
+	sched_submit_work(tsk);
+	do {
+		preempt_disable();
+		__schedule(false);
+		sched_preempt_enable_no_resched();
+	} while (need_resched());
+}
 \end{code}
-\verb|context_switch| - switch to the new MM and the new thread's register state.
-  
+\begin{code}
+// ./kernel/sched/core.c:3469
+static void __sched notrace __schedule(bool preempt) {
+	struct task_struct *prev, *next;
+	unsigned long *switch_count;
+	struct rq_flags rf;
+	struct rq *rq;
+	int cpu;
+
+	cpu = smp_processor_id();
+	rq = cpu_rq(cpu);
+	prev = rq->curr;
+        // ...
+	next = pick_next_task(rq, prev, &rf);
+	clear_tsk_need_resched(prev);
+	clear_preempt_need_resched();
+
+	if (likely(prev != next)) {
+		rq->nr_switches++;
+		rq->curr = next;
+                // ...
+		++*switch_count;
+
+		trace_sched_switch(preempt, prev, next); // Tracepoint
+
+		/* Also unlocks the rq: */
+		rq = context_switch(rq, prev, next, &rf);
+	} else {
+		rq->clock_update_flags &= ~(RQCF_ACT_SKIP|RQCF_REQ_SKIP);
+		rq_unlock_irq(rq, &rf);
+	}
+
+	balance_callback(rq);
+}
+\end{code}
+\verb|context_switch()| is called when scheduling in order to perform complete the task switch. 
+Internally, \verb|context_switch| performs two operations:
+\begin{itemize}
+    \item Switches the virtual memory areas of the two processes (\verb|mm_struct|)
+    \item Restores the hardware context (the state of the registers) of the new process, and saves the old one's hardware context in its \verb|task_struct|.
+\end{itemize}
+If a task's \verb|task_struct| has \verb|mm| at \verb|NULL|, then it is a kernel thread.\label{sec:context_switch}
+\begin{code}
+/*
+ * context_switch - switch to the new MM and the new thread's register state.
+ */
+static __always_inline struct rq *
+context_switch(struct rq *rq, struct task_struct *prev,
+	       struct task_struct *next, struct rq_flags *rf) {
+	struct mm_struct *mm, *oldmm;
+
+	prepare_task_switch(rq, prev, next);
+
+	mm = next->mm;
+	oldmm = prev->active_mm;
+        // ...
+	arch_start_context_switch(prev); // Architecture dependent
+
+	/*
+	 * If mm is non-NULL, we pass through switch_mm(). If mm is
+	 * NULL, we will pass through mmdrop() in finish_task_switch().
+	 * Both of these contain the full memory barrier required by
+	 * membarrier after storing to rq->curr, before returning to
+	 * user-space.
+	 */
+	if (!mm) {
+		next->active_mm = oldmm;
+		mmgrab(oldmm);
+		enter_lazy_tlb(oldmm, next);
+	} else
+		switch_mm_irqs_off(oldmm, mm, next);
+
+	if (!prev->mm) {
+		prev->active_mm = NULL;
+		rq->prev_mm = oldmm;
+	}
+
+	rq->clock_update_flags &= ~(RQCF_ACT_SKIP|RQCF_REQ_SKIP);
+
+	prepare_lock_switch(rq, next, rf);
+
+	/* Here we just switch the register state and the stack. */
+	switch_to(prev, next, prev);
+	barrier();
+
+	return finish_task_switch(prev);
+}
+\end{code}
+
 \paragraph{\texttt{trace\_sched\_pi\_setprio}}
 Tracepoint for showing priority inheritance modifying a tasks priority.
 
@@ -277,7 +739,7 @@ Tracepoint for showing priority inheritance modifying a tasks priority.
 
 \textbf{Usages}
 \begin{code}
-
+// ./kernel/sched/core.c:3797
 \end{code}
 
 \paragraph{\texttt{trace\_sched\_move\_numa}}
@@ -299,7 +761,23 @@ Tracks migration of tasks from one runqueue to another. Can be used to detect if
 
 \textbf{Usages}
 \begin{code}
+// ./kernel/sched/core.c:5485
+/* Migrate current task p to target_cpu */
+int migrate_task_to(struct task_struct *p, int target_cpu) {
+	struct migration_arg arg = { p, target_cpu };
+	int curr_cpu = task_cpu(p);
 
+	if (curr_cpu == target_cpu)
+		return 0;
+
+	if (!cpumask_test_cpu(target_cpu, &p->cpus_allowed))
+		return -EINVAL;
+
+	/* TODO: This is not properly updating schedstats */
+
+	trace_sched_move_numa(p, curr_cpu, target_cpu);
+	return stop_one_cpu(curr_cpu, migration_cpu_stop, &arg);
+}
 \end{code}
 
 \section{Events in \texttt{fair.c}}
@@ -323,11 +801,12 @@ Tracks migration of tasks from one runqueue to another. Can be used to detect if
 
 \textbf{Usages}
 \begin{code}
-
+// ./kernel/sched/fair.c:1836
+// ./kernel/sched/fair.c:1844
 \end{code}
 
 \paragraph{\texttt{trace\_sched\_stat\_runtime}}
-Tracepoint for accounting runtime (time the task is executing on a CPU).
+Tracepoint for accounting runtime and vruntime.
 
 \textbf{Parameters}
 \begin{itemize}
@@ -344,16 +823,11 @@ Tracepoint for accounting runtime (time the task is executing on a CPU).
     \item \verb|u64 vruntime|
 \end{itemize}
 
-\textbf{Usages}
-\begin{code}
-./kernel/sched/fair.c:829
-\end{code}
-
-Update the current task's runtime statistics.
-Mentioned in Section \ref{chap:ftrace}. The tracepoint is located in the \verb|update_curr()| function, shown in Section \ref{trace:sched_stat_runtime}.
+\textbf{Usages}\\
+The tracepoint is located at the end of the \verb|update_curr()| function, shown in Section \ref{trace:sched_stat_runtime}. The event shows all the relevant updated statistics for the process that just got updated after a timer interrupt. This event was also used as an example for tracing in Chapter \ref{chap:ftrace}.
 
 \paragraph{\texttt{trace\_sched\_stat\_wait}}
-Tracepoint for accounting wait time (time the task is runnable but not actually running due to scheduler contention).
+Tracepoint for accounting wait time. That is, the time the task is runnable but not actually running due to scheduler contention.
 
 \textbf{Parameters}
 \begin{itemize}
@@ -370,11 +844,47 @@ Tracepoint for accounting wait time (time the task is runnable but not actually 
 
 \textbf{Usages}
 \begin{code}
+// ./kernel/sched/fair.c:886
+static inline void
+update_stats_wait_end(struct cfs_rq *cfs_rq, struct sched_entity *se){
+	struct task_struct *p;
+	u64 delta;
 
+	if (!schedstat_enabled())
+		return;
+
+	delta = rq_clock(rq_of(cfs_rq)) - schedstat_val(se->statistics.wait_start);
+
+	if (entity_is_task(se)) {
+		p = task_of(se);
+		if (task_on_rq_migrating(p)) {
+			/*
+			 * Preserve migrating task's wait time so wait_start
+			 * time stamp can be adjusted to accumulate wait time
+			 * prior to migration.
+			 */
+			__schedstat_set(se->statistics.wait_start, delta);
+			return;
+		}
+		trace_sched_stat_wait(p, delta); // Tracepoint
+	}
+
+	__schedstat_set(se->statistics.wait_max,
+		      max(schedstat_val(se->statistics.wait_max), delta));
+	__schedstat_inc(se->statistics.wait_count);
+	__schedstat_add(se->statistics.wait_sum, delta);
+	__schedstat_set(se->statistics.wait_start, 0);
+}
 \end{code}
 
-\paragraph{\texttt{trace\_sched\_stat\_sleep}}
-Tracepoint for accounting sleep time (time the task is not runnable, including iowait, see below).
+\paragraph{\texttt{trace\_sched\_stat\_*}(\texttt{sleep/iowait/blocked})} 
+The purpose of these three events is very similar: account updated statistics, like \texttt{trace\_sched\_stat\_runtime}.
+They also have the same parameters and output format (same output template).
+\begin{itemize}
+    \item \texttt{trace\_sched\_stat\_sleep} -- Tracepoint for accounting sleep time: the time the task is not runnable, including iowait.
+    \item \texttt{trace\_sched\_stat\_iowait} -- Tracepoint for accounting iowait time: the time the task is not runnable due to waiting on IO to complete.
+    \item \texttt{trace\_sched\_stat\_blocked} -- Tracepoint for accounting blocked time: time the task is in uninterruptible.
+\end{itemize}
 
 \textbf{Parameters}
 \begin{itemize}
@@ -389,58 +899,82 @@ Tracepoint for accounting sleep time (time the task is not runnable, including i
     \item \verb|u64 delay|
 \end{itemize}
 
-\textbf{Usages}
+\textbf{Usages}\\
+Their tracepoints are all located in the same function.
 \begin{code}
+// ./kernel/sched/fair.c:925/944/947
+static inline void
+update_stats_enqueue_sleeper(struct cfs_rq *cfs_rq, struct sched_entity *se) {
+	struct task_struct *tsk = NULL;
+	u64 sleep_start, block_start;
 
-\end{code}
+	if (!schedstat_enabled())
+		return;
 
+	sleep_start = schedstat_val(se->statistics.sleep_start);
+	block_start = schedstat_val(se->statistics.block_start);
 
-\paragraph{\texttt{trace\_sched\_stat\_iowait}}
-Tracepoint for accounting iowait time (time the task is not runnable due to waiting on IO to complete).
+	if (entity_is_task(se))
+		tsk = task_of(se);
 
-\textbf{Parameters}
-\begin{itemize}
-    \item \verb|struct task_struct *tsk|
-    \item \verb|u64 delay|
-\end{itemize}
+	if (sleep_start) {
+		u64 delta = rq_clock(rq_of(cfs_rq)) - sleep_start;
 
-\textbf{Trace output (\texttt{sched\_stat\_template})}
-\begin{itemize}
-    \item \verb|char *comm|
-    \item \verb|pid_t pid|
-    \item \verb|u64 delay|
-\end{itemize}
+		if ((s64)delta < 0)
+			delta = 0;
 
-\textbf{Usages}
-\begin{code}
+		if (unlikely(delta > schedstat_val(se->statistics.sleep_max)))
+			__schedstat_set(se->statistics.sleep_max, delta);
 
-\end{code}
+		__schedstat_set(se->statistics.sleep_start, 0);
+		__schedstat_add(se->statistics.sum_sleep_runtime, delta);
 
-\paragraph{\texttt{trace\_sched\_stat\_blocked}}
-Tracepoint for accounting blocked time (time the task is in uninterruptible).
+		if (tsk) {
+			account_scheduler_latency(tsk, delta >> 10, 1);
+			trace_sched_stat_sleep(tsk, delta); // Tracepoint
+		}
+	}
+	if (block_start) {
+		u64 delta = rq_clock(rq_of(cfs_rq)) - block_start;
 
-\textbf{Parameters}
-\begin{itemize}
-    \item \verb|struct task_struct *tsk|
-    \item \verb|u64 delay|
-\end{itemize}
+		if ((s64)delta < 0)
+			delta = 0;
 
-\textbf{Trace output (\texttt{sched\_stat\_template})}
-\begin{itemize}
-    \item \verb|char *comm|
-    \item \verb|pid_t pid|
-    \item \verb|u64 delay|
-\end{itemize}
+		if (unlikely(delta > schedstat_val(se->statistics.block_max)))
+			__schedstat_set(se->statistics.block_max, delta);
 
-\textbf{Usages}
-\begin{code}
+		__schedstat_set(se->statistics.block_start, 0);
+		__schedstat_add(se->statistics.sum_sleep_runtime, delta);
 
+		if (tsk) {
+			if (tsk->in_iowait) {
+				__schedstat_add(se->statistics.iowait_sum, delta);
+				__schedstat_inc(se->statistics.iowait_count);
+				trace_sched_stat_iowait(tsk, delta); // Tracepoint
+			}
+
+			trace_sched_stat_blocked(tsk, delta); // Tracepoint
+
+			/*
+			 * Blocking time is in units of nanosecs, so shift by
+			 * 20 to get a milliseconds-range estimation of the
+			 * amount of time that the task spent sleeping:
+			 */
+			if (unlikely(prof_on == SLEEP_PROFILING)) {
+				profile_hits(SLEEP_PROFILING,
+						(void *)get_wchan(tsk),
+						delta >> 20);
+			}
+			account_scheduler_latency(tsk, delta >> 10, 0);
+		}
+	}
+}
 \end{code}
 
 \section{Events in other source files}
 \dots (Work in progress) \dots
 \paragraph{\texttt{trace\_sched\_process\_exec}}
-Tracepoint for exec:
+Tracepoint for exec.
 
 \textbf{Parameters}
 \begin{itemize}
@@ -458,13 +992,33 @@ Tracepoint for exec:
 
 \textbf{Usages}
 \begin{code}
-./fs/exec.c:1698
+// ./fs/exec.c:1698
+static int exec_binprm(struct linux_binprm *bprm){
+	pid_t old_pid, old_vpid;
+	int ret;
+
+	/* Need to fetch pid before load_binary changes it */
+	old_pid = current->pid;
+	rcu_read_lock();
+	old_vpid = task_pid_nr_ns(current, task_active_pid_ns(current->parent));
+	rcu_read_unlock();
+
+	ret = search_binary_handler(bprm);
+	if (ret >= 0) {
+		audit_bprm(bprm);
+		trace_sched_process_exec(current, old_pid, bprm); // Tracepoint
+		ptrace_event(PTRACE_EVENT_EXEC, old_vpid);
+		proc_exec_connector(current);
+	}
+
+	return ret;
+}
 \end{code}
 \verb|exec_binprm(struct linux_binprm *bprm)|
 load binaries using bprm(binary parameter)
   
 \paragraph{\texttt{trace\_sched\_process\_wait}}
-Tracepoint for a waiting task:
+Tracepoint for a waiting task.
 
 \textbf{Parameters}
 \begin{itemize}
@@ -480,11 +1034,63 @@ Tracepoint for a waiting task:
 
 \textbf{Usages}
 \begin{code}
-./kernel/exit.c:1503
+// ./kernel/exit.c:1503
+static long do_wait(struct wait_opts *wo){
+	struct task_struct *tsk;
+	int retval;
+
+	trace_sched_process_wait(wo->wo_pid); // Tracepoint
+
+	init_waitqueue_func_entry(&wo->child_wait, child_wait_callback);
+	wo->child_wait.private = current;
+	add_wait_queue(&current->signal->wait_chldexit, &wo->child_wait);
+repeat:
+	/*
+	 * If there is nothing that can match our criteria, just get out.
+	 * We will clear ->notask_error to zero if we see any child that
+	 * might later match our criteria, even if we are not able to reap
+	 * it yet.
+	 */
+	wo->notask_error = -ECHILD;
+	if ((wo->wo_type < PIDTYPE_MAX) &&
+	   (!wo->wo_pid || hlist_empty(&wo->wo_pid->tasks[wo->wo_type])))
+		goto notask;
+
+	set_current_state(TASK_INTERRUPTIBLE);
+	read_lock(&tasklist_lock);
+	tsk = current;
+	do {
+		retval = do_wait_thread(wo, tsk);
+		if (retval)
+			goto end;
+
+		retval = ptrace_do_wait(wo, tsk);
+		if (retval)
+			goto end;
+
+		if (wo->wo_flags & __WNOTHREAD)
+			break;
+	} while_each_thread(current, tsk);
+	read_unlock(&tasklist_lock);
+
+notask:
+	retval = wo->notask_error;
+	if (!retval && !(wo->wo_flags & WNOHANG)) {
+		retval = -ERESTARTSYS;
+		if (!signal_pending(current)) {
+			schedule();
+			goto repeat;
+		}
+	}
+end:
+	__set_current_state(TASK_RUNNING);
+	remove_wait_queue(&current->signal->wait_chldexit, &wo->child_wait);
+	return retval;
+}
 \end{code}
 
 \paragraph{\texttt{trace\_sched\_process\_free}}
-Tracepoint for freeing a task:
+Tracepoint for freeing a task.
 
 \textbf{Parameters}
 \begin{itemize}
@@ -500,12 +1106,19 @@ Tracepoint for freeing a task:
 
 \textbf{Usages}
 \begin{code}
-./kernel/exit.c:180
+// ./kernel/exit.c:180
+static void delayed_put_task_struct(struct rcu_head *rhp){
+	struct task_struct *tsk = container_of(rhp, struct task_struct, rcu);
+
+	perf_event_delayed_put(tsk);
+	trace_sched_process_free(tsk); // Tracepoint
+	put_task_struct(tsk);
+}
 \end{code}
 Deallocate \verb|task_struct|
   
 \paragraph{\texttt{trace\_sched\_process\_exit}}
-Tracepoint for a task exiting:
+Tracepoint for a task exiting.
 
 \textbf{Parameters}
 \begin{itemize}
@@ -519,15 +1132,175 @@ Tracepoint for a task exiting:
     \item \verb|int prio|
 \end{itemize}
 
-\textbf{Usages}
+\textbf{Usages} %TODO trim this function
 \begin{code}
-./kernel/exit.c:866
+// ./kernel/exit.c:866
+void __noreturn do_exit(long code){
+	struct task_struct *tsk = current;
+	int group_dead;
+
+	profile_task_exit(tsk);
+	kcov_task_exit(tsk);
+
+	WARN_ON(blk_needs_flush_plug(tsk));
+
+	if (unlikely(in_interrupt()))
+		panic("Aiee, killing interrupt handler!"); // Kernel panic
+	if (unlikely(!tsk->pid))
+		panic("Attempted to kill the idle task!"); // Kernel panic
+
+	/*
+	 * If do_exit is called because this processes oopsed, it's possible
+	 * that get_fs() was left as KERNEL_DS, so reset it to USER_DS before
+	 * continuing. Amongst other possible reasons, this is to prevent
+	 * mm_release()->clear_child_tid() from writing to a user-controlled
+	 * kernel address.
+	 */
+	set_fs(USER_DS);
+
+	ptrace_event(PTRACE_EVENT_EXIT, code);
+
+	validate_creds_for_do_exit(tsk);
+
+	/*
+	 * We're taking recursive faults here in do_exit. Safest is to just
+	 * leave this task alone and wait for reboot.
+	 */
+	if (unlikely(tsk->flags & PF_EXITING)) {
+		pr_alert("Fixing recursive fault but reboot is needed!\n");
+		/*
+		 * We can do this unlocked here. The futex code uses
+		 * this flag just to verify whether the pi state
+		 * cleanup has been done or not. In the worst case it
+		 * loops once more. We pretend that the cleanup was
+		 * done as there is no way to return. Either the
+		 * OWNER_DIED bit is set by now or we push the blocked
+		 * task into the wait for ever nirwana as well.
+		 */
+		tsk->flags |= PF_EXITPIDONE;
+		set_current_state(TASK_UNINTERRUPTIBLE);
+		schedule();
+	}
+
+	exit_signals(tsk);  /* sets PF_EXITING */
+	/*
+	 * Ensure that all new tsk->pi_lock acquisitions must observe
+	 * PF_EXITING. Serializes against futex.c:attach_to_pi_owner().
+	 */
+	smp_mb();
+	/*
+	 * Ensure that we must observe the pi_state in exit_mm() ->
+	 * mm_release() -> exit_pi_state_list().
+	 */
+	raw_spin_lock_irq(&tsk->pi_lock);
+	raw_spin_unlock_irq(&tsk->pi_lock);
+
+	if (unlikely(in_atomic())) {
+		pr_info("note: %s[%d] exited with preempt_count %d\n",
+			current->comm, task_pid_nr(current),
+			preempt_count());
+		preempt_count_set(PREEMPT_ENABLED);
+	}
+
+	/* sync mm's RSS info before statistics gathering */
+	if (tsk->mm)
+		sync_mm_rss(tsk->mm);
+	acct_update_integrals(tsk);
+	group_dead = atomic_dec_and_test(&tsk->signal->live);
+	if (group_dead) {
+#ifdef CONFIG_POSIX_TIMERS
+		hrtimer_cancel(&tsk->signal->real_timer);
+		exit_itimers(tsk->signal);
+#endif
+		if (tsk->mm)
+			setmax_mm_hiwater_rss(&tsk->signal->maxrss, tsk->mm);
+	}
+	acct_collect(code, group_dead);
+	if (group_dead)
+		tty_audit_exit();
+	audit_free(tsk);
+
+	tsk->exit_code = code;
+	taskstats_exit(tsk, group_dead);
+
+	exit_mm();
+
+	if (group_dead)
+		acct_process();
+	trace_sched_process_exit(tsk); // Tracepoint
+
+	exit_sem(tsk);
+	exit_shm(tsk);
+	exit_files(tsk);
+	exit_fs(tsk);
+	if (group_dead)
+		disassociate_ctty(1);
+	exit_task_namespaces(tsk);
+	exit_task_work(tsk);
+	exit_thread(tsk);
+
+	/*
+	 * Flush inherited counters to the parent - before the parent
+	 * gets woken up by child-exit notifications.
+	 *
+	 * because of cgroup mode, must be called before cgroup_exit()
+	 */
+	perf_event_exit_task(tsk);
+
+	sched_autogroup_exit_task(tsk);
+	cgroup_exit(tsk);
+
+	/*
+	 * FIXME: do that only when needed, using sched_exit tracepoint
+	 */
+	flush_ptrace_hw_breakpoint(tsk);
+
+	exit_tasks_rcu_start();
+	exit_notify(tsk, group_dead);
+	proc_exit_connector(tsk);
+	mpol_put_task_policy(tsk);
+#ifdef CONFIG_FUTEX
+	if (unlikely(current->pi_state_cache))
+		kfree(current->pi_state_cache);
+#endif
+	/*
+	 * Make sure we are holding no locks:
+	 */
+	debug_check_no_locks_held();
+	/*
+	 * We can do this unlocked here. The futex code uses this flag
+	 * just to verify whether the pi state cleanup has been done
+	 * or not. In the worst case it loops once more.
+	 */
+	tsk->flags |= PF_EXITPIDONE;
+
+	if (tsk->io_context)
+		exit_io_context(tsk);
+
+	if (tsk->splice_pipe)
+		free_pipe_info(tsk->splice_pipe);
+
+	if (tsk->task_frag.page)
+		put_page(tsk->task_frag.page);
+
+	validate_creds_for_do_exit(tsk);
+
+	check_stack_usage();
+	preempt_disable();
+	if (tsk->nr_dirtied)
+		__this_cpu_add(dirty_throttle_leaks, tsk->nr_dirtied);
+	exit_rcu();
+	exit_tasks_rcu_finish();
+
+	lockdep_free_task(tsk);
+	do_task_dead();
+}
 \end{code}
 
-\mycomment{MP: dove c'è il tracepoint della exit ci sta un panic(). mostralo e citalo nel primo capitolo}
+%MP: dove c'è il tracepoint della exit ci sta un panic(). mostralo e citalo nel primo capitolo
   
 \paragraph{\texttt{trace\_sched\_process\_fork}}
-Tracepoint for \verb|do_fork|:
+Tracepoint for \verb|do_fork|.
 
 \textbf{Parameters}
 \begin{itemize}
@@ -545,16 +1318,88 @@ Tracepoint for \verb|do_fork|:
 
 \textbf{Usages}
 \begin{code}
-./kernel/fork.c:2242
+// ./kernel/fork.c:2242
+/*
+ *  Ok, this is the main fork-routine.
+ *
+ * It copies the process, and if successful kick-starts
+ * it and waits for it to finish using the VM if required.
+ */
+long _do_fork(unsigned long clone_flags,
+	      unsigned long stack_start,
+	      unsigned long stack_size,
+	      int __user *parent_tidptr,
+	      int __user *child_tidptr,
+	      unsigned long tls){
+	struct completion vfork;
+	struct pid *pid;
+	struct task_struct *p;
+	int trace = 0;
+	long nr;
+
+	/*
+	 * Determine whether and which event to report to ptracer.  When
+	 * called from kernel_thread or CLONE_UNTRACED is explicitly
+	 * requested, no event is reported; otherwise, report if the event
+	 * for the type of forking is enabled.
+	 */
+	if (!(clone_flags & CLONE_UNTRACED)) {
+		if (clone_flags & CLONE_VFORK)
+			trace = PTRACE_EVENT_VFORK;
+		else if ((clone_flags & CSIGNAL) != SIGCHLD)
+			trace = PTRACE_EVENT_CLONE;
+		else
+			trace = PTRACE_EVENT_FORK;
+
+		if (likely(!ptrace_event_enabled(current, trace)))
+			trace = 0;
+	}
+
+	p = copy_process(clone_flags, stack_start, stack_size,
+			 child_tidptr, NULL, trace, tls, NUMA_NO_NODE);
+	add_latent_entropy();
+
+	if (IS_ERR(p))
+		return PTR_ERR(p);
+
+	/*
+	 * Do this prior waking up the new thread - the thread pointer
+	 * might get invalid after that point, if the thread exits quickly.
+	 */
+	trace_sched_process_fork(current, p); // Tracepoint
+
+	pid = get_task_pid(p, PIDTYPE_PID);
+	nr = pid_vnr(pid);
+
+	if (clone_flags & CLONE_PARENT_SETTID)
+		put_user(nr, parent_tidptr);
+
+	if (clone_flags & CLONE_VFORK) {
+		p->vfork_done = &vfork;
+		init_completion(&vfork);
+		get_task_struct(p);
+	}
+
+	wake_up_new_task(p);
+
+	/* forking complete and child started to run, tell ptracer */
+	if (unlikely(trace))
+		ptrace_event_pid(trace, pid);
+
+	if (clone_flags & CLONE_VFORK) {
+		if (!wait_for_vfork_done(p, &vfork))
+			ptrace_event_pid(PTRACE_EVENT_VFORK_DONE, pid);
+	}
+
+	put_pid(pid);
+	return nr;
+}
 \end{code}
-\verb|_do_fork|
-It copies the process, and if successful kick-starts
-it and waits for it to finish using the VM if required.
 
 Section \ref{trace:sched_process_fork}
     
 \paragraph{\texttt{trace\_sched\_process\_hang}}
-Detect Hung Task
+Detect hung task.
 
 \textbf{Parameters}
 \begin{itemize}
@@ -569,12 +1414,70 @@ Detect Hung Task
 
 \textbf{Usages}
 \begin{code}
-./kernel/hung_task.c:113
+// ./kernel/hung_task.c:113
+static void check_hung_task(struct task_struct *t, unsigned long timeout){
+	unsigned long switch_count = t->nvcsw + t->nivcsw;
+
+	/*
+	 * Ensure the task is not frozen.
+	 * Also, skip vfork and any other user process that freezer should skip.
+	 */
+	if (unlikely(t->flags & (PF_FROZEN | PF_FREEZER_SKIP)))
+	    return;
+
+	/*
+	 * When a freshly created task is scheduled once, changes its state to
+	 * TASK_UNINTERRUPTIBLE without having ever been switched out once, it
+	 * musn't be checked.
+	 */
+	if (unlikely(!switch_count))
+		return;
+
+	if (switch_count != t->last_switch_count) {
+		t->last_switch_count = switch_count;
+		t->last_switch_time = jiffies;
+		return;
+	}
+	if (time_is_after_jiffies(t->last_switch_time + timeout * HZ))
+		return;
+
+	trace_sched_process_hang(t); // Tracepoint
+
+	if (sysctl_hung_task_panic) {
+		console_verbose();
+		hung_task_show_lock = true;
+		hung_task_call_panic = true;
+	}
+
+	/*
+	 * Ok, the task did not get scheduled for more than 2 minutes,
+	 * complain:
+	 */
+	if (sysctl_hung_task_warnings) {
+		if (sysctl_hung_task_warnings > 0)
+			sysctl_hung_task_warnings--;
+		pr_err("INFO: task %s:%d blocked for more than %ld seconds.\n",
+			t->comm, t->pid, timeout);
+		pr_err("      %s %s %.*s\n",
+			print_tainted(), init_utsname()->release,
+			(int)strcspn(init_utsname()->version, " "),
+			init_utsname()->version);
+		pr_err("\"echo 0 > /proc/sys/kernel/hung_task_timeout_secs\""
+			" disables this message.\n");
+		sched_show_task(t);
+		hung_task_show_lock = true;
+	}
+
+	touch_nmi_watchdog();
+}
 \end{code}
 Kernel thread for detecting tasks stuck in D state
   
-\paragraph{\texttt{trace\_sched\_kthread\_stop}}
-Tracepoint for calling \verb|kthread_stop|, performed to end a kthread.
+\paragraph{\texttt{trace\_sched\_kthread\_*}(\texttt{stop/stop\_ret})}
+\begin{itemize}
+    \item \texttt{trace\_sched\_kthread\_stop} -- Tracepoint for calling \verb|kthread_stop|, performed to end a kthread.
+    \item \texttt{trace\_sched\_kthread\_stop\_ret} -- Tracepoint for the return value of the kthread stopping.
+\end{itemize}
 
 \textbf{Parameters}
 \begin{itemize}
@@ -587,25 +1490,42 @@ Tracepoint for calling \verb|kthread_stop|, performed to end a kthread.
     \item \verb|pid_t pid|
 \end{itemize}
 
-\textbf{Usages}
-\begin{code}
-
-\end{code}
-
-\paragraph{\texttt{trace\_sched\_kthread\_stop\_ret}}
-Tracepoint for the return value of the kthread stopping.
-
-\textbf{Parameters}
-\begin{itemize}
-    \item \verb|int ret|
-\end{itemize}
-
-\textbf{Trace output}
-\begin{itemize}
-    \item \verb|int ret|
-\end{itemize}
+\texttt{trace\_sched\_kthread\_stop\_ret} has just the return value (\verb|ret|) as parameter and trace output. Both tracepoints are located in the same function.
 
 \textbf{Usages}
 \begin{code}
+// ./kernel/kthread.c:543/554
+/**
+ * kthread_stop - stop a thread created by kthread_create().
+ * @k: thread created by kthread_create().
+ *
+ * Sets kthread_should_stop() for @k to return true, wakes it, and
+ * waits for it to exit. This can also be called after kthread_create()
+ * instead of calling wake_up_process(): the thread will exit without
+ * calling threadfn().
+ *
+ * If threadfn() may call do_exit() itself, the caller must ensure
+ * task_struct can't go away.
+ *
+ * Returns the result of threadfn(), or %-EINTR if wake_up_process()
+ * was never called.
+ */
+int kthread_stop(struct task_struct *k){
+	struct kthread *kthread;
+	int ret;
 
+	trace_sched_kthread_stop(k); // Tracepoint
+
+	get_task_struct(k);
+	kthread = to_kthread(k);
+	set_bit(KTHREAD_SHOULD_STOP, &kthread->flags);
+	kthread_unpark(k);
+	wake_up_process(k);
+	wait_for_completion(&kthread->exited);
+	ret = k->exit_code;
+	put_task_struct(k);
+
+	trace_sched_kthread_stop_ret(ret); // Tracepoint
+	return ret;
+}
 \end{code}

@@ -211,24 +211,6 @@ A timer is set to trigger at the end of every period, the default value for a pe
     \item lastly, if there are any throttled runqueues, it tries to assign them more time and unthrottle them. It is possible that the updated global runtime is not sufficient to unthrottle all the runqueues.
 \end{itemize}
 
-\section{Autogroup}%http://man7.org/linux/man-pages/man7/sched.7.html
-%https://lwn.net/Articles/418884/
-%https://lwn.net/Articles/415740/
-Group scheduling is a nice feature, but at first it required a manual setup and root privileges and many desktop users weren't using it. Autogroup is a feature that allows groups to be created automatically based on the session ID and also improves interactive performance on desktop, especially during CPU-intensive workloads.
-
-\subsubsection{Session}
-Session are used to identify distinct process groups, each session has an ID. This ID corresponds to the PID of the process that initiates the session. It can be initiated via the \verb|setsid()| an it is usually done when a new terminal is started. If a process, that belongs to a group, generates a new process via \verb|fork()| the new process will inherit the session ID.
-
-When the autogroup feature is enabled in the kernel with \verb|CONFIG_SCHED_AUTOGROUP|, all the tasks with the same session ID are placed inside the same task group. We saw in section 1.2 how the scheduler tries give each group an equal amount of CPU time.
-
-This is particularly useful during CPU-intensive workloads that use many parallel processes. Suppose that there are 10 CPU-intensive parallel processes and 1 process, like a video player, that also needs a lot of CPU. Without autogrouping the CPU would be equally distributed between all the processes and  the video player would only get a small portion of CPU time, which could degrade the viewing experience. With autogrouping enabled, there would be one task group containing the 10 processes and one containing only the video player. This way the player can get 50\% of CPU time.
-
-%to continue:
-%how to interact with autogroup
-%alternatives to session ID maybe(tty, see links)
-%what happens when a group is created
-
-
 \section{Control groups}
 \label{sec:cgroup}
 %https://www.kernel.org/doc/Documentation/cgroup-v1/cgroups.txt
@@ -287,6 +269,66 @@ The \verb|cpu| subsystem also offers some statistics related to CPU bandwidth in
     \item \verb|throttled_time|, which is the total amount of time that the group has spent in a throttled state.
 \end{itemize}
 
+\subsection{Implementation}
 
+To better understand how \verb|cgrups| work, it is worth analyzing how they are implemented.
+
+Every \verb|cgroup| has a dedicated struct which contains the information needed to operate, like the hierarchy it belongs to. But, \verb|cgroups| and tasks are not linked directly. There could be many hierarchies and every task must be present in a \verb|cgroup| of each one. In many cases there are only 12 hierarchies, one for each subsystem, but there could also be many more. 
+
+When a process is created, it is placed in the same \verb|cgroup| as his parent. As a consequence many \verb|cgroups| across hierarchies have the same members. This characteristic can be used to simplify the linkage between tasks and \verb|cgroups|.
+
+\paragraph{\textit{css\_set struct}}
+The \verb|css_set struct| is used to identify a particular set of \verb|cgroups| across hierarchies. Each task can be attached to only one \verb|css_set|, but more \verb|css_set| can be attached to the same \verb|cgroup|. 
+
+Suppose that a task is moved from one group to another, but only on one hierarchy. In this case a new \verb|css_set| is created that identifies this particular set of \verb|cgroups|. The task now points to this new set, but there may still be other tasks using the old set. For this reason a \verb|cgroup| may have more than one \verb|css_set| attached.
+
+\paragraph{\textit{cgrp\_cset\_link struct}}
+The linkage between \verb|css_set| and \verb|cgroups| is done via the \verb|cgrp_cset_link| struct. It simply contains a pointer to a \verb|cgroup| and a pointer to a \verb|css_set|. Every \verb|css_set| maintains a list of \verb|cgrp_link|, one for \verb|cgroup| in each hierarchy. A \verb|cgroup| also has a list of all the \verb|cgro_links| that point to it. 
+
+With this structure it is easy to find a \verb|cgroup| for a given task, and it also easy to find a all the tasks belonging to a \verb|cgroup|. But it is hard to find the cgroup of a task that is attached to a particular subsystem.
+
+\paragraph{The \textit{cgroup\_subsystem\_state struct}}
+Every \verb|css_set struct| contains a list of \verb|cgroup_subsystem_state struct| (abbreviated to \verb|css|), it includes the information for each couple subsystem-cgroup.
+The position of a \verb|css| in the list is equal to the id of the subsystem it corresponds to. When a task needs to access one of its cgroup in a particular hierarchy, it can simply follow the pointer to the cgroup inside the corresponding \verb|cgroup_subsys_state struct|. Each \verb|css| also has a pointer to the parent \verb|css| for quickly retrieving its information.
+
+\subsubsection{The \textit{cgroup\_subsys struct}}
+A subsystem is defined via a \verb|cgroup_subsys struct|. It contains some basic information like the subsystem id and a unique name. And contains a set of methods that perform all the actions required by the subsystem. Let's analyze some of the methods for the \verb|cpu| subsystem, it is defined as follow in \verb|kernel/sched/core.c|:
+\begin{code}
+struct cgroup_subsys cpu_cgrp_subsys = {
+	.css_alloc	= cpu_cgroup_css_alloc,
+	.css_online	= cpu_cgroup_css_online,
+	.css_released	= cpu_cgroup_css_released,
+	.css_free	= cpu_cgroup_css_free,
+	.css_extra_stat_show = cpu_extra_stat_show,
+	.fork		= cpu_cgroup_fork,
+	.can_attach	= cpu_cgroup_can_attach,
+	.attach		= cpu_cgroup_attach,
+	.legacy_cftypes	= cpu_legacy_files,
+};
+\end{code}
+\paragraph{\textit{css} allocation}
+The \verb|css_alloc| method is called when a new subsystem state struct needs to be allocated, for example when a new cgroup is created. In the case of the \verb|cpu| subsystem, it also allocates the \verb|task_group struct| and the \verb|sched_entity| for each CPU in the system. This way the \verb|cgroups| and \verb|sched_entity| hierarchies are always equivalent. The \verb|css_free| method, does the opposite, it eliminates the subsystem state and all the corresponding structs. These two methods are the only strictly required ones. All the other methods are optional.
+
+\paragraph{Task attachment}
+Before moving a task from a \verb|cgroup| to another, the \verb|can_attach| method is called. It if returns an error, the operation is aborted. This means that the subsystems attached to a \verb|cgroup| can block the attachment of some tasks. The \verb|cpu| subsystem does not allow the attachment of tasks that are still being created and does not allow real-time tasks to be added to a \verb|cgroup| if real-time grouping is not enabled on the system. 
+
+After the tasks have been moved to the new \verb|cgroup|, the \verb|attach| method is called. In the \verb|cpu| subsystem it moves the tasks in the runqueue of the appropriate \verb|sched_entity|.
+
+\verb|legacy_cftypes| defines the methods for interacting with the subsystem's files.
+
+\subsection{Autogroup}%http://man7.org/linux/man-pages/man7/sched.7.html
+%https://lwn.net/Articles/418884/
+%https://lwn.net/Articles/415740/
+
+\verb|Cgroups| require a manual setup from the user and they are not convenient for normal desktop users. Autogroup is a feature that allows groups to be created automatically based on the session ID. This can improve the interactive performance of a desktop system, especially during CPU-intensive workloads.
+
+\subsubsection{Session}
+Session are used to identify distinct process groups, each session has an ID. This ID corresponds to the PID of the process that initiates the session. It can be initiated via the \verb|setsid()| an it is usually done when a new terminal is started. The session is also inherited by the child process when the parent forks.
+
+When the autogroup feature is enabled in the kernel with \newline \verb|CONFIG_SCHED_AUTOGROUP|, all the tasks with the same session ID are placed inside the same task group. We saw in section 1.2 how the scheduler tries give each group an equal amount of CPU time.
+
+This is particularly useful during CPU-intensive workloads that use many parallel processes. Suppose that there are 10 CPU-intensive parallel processes and 1 process, like a video player, that also needs a lot of CPU. Without autogrouping the CPU would be equally distributed between all the processes and  the video player would only get a small portion of CPU time, which could degrade the viewing experience. With autogrouping enabled, there would be one task group containing the 10 processes and one containing only the video player. This way the player can get 50\% of CPU time.
+
+The \verb|proc| filesystem allows the user to interact with autogroups. It can be enabled or disabled by writing 0 or 1 in \verb|proc/sys/kernel/sched_autogroup_enabled|.  The group of a particular task can be viewed in the file \verb|proc/[pid]/autogroup|. This file contains the name of the task's group and the \verb|nice| value of the group. This can be modified to control the weight of the corresponding \verb|sched_entity|.
 
 

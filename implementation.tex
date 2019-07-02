@@ -92,9 +92,52 @@ struct sched_class {
     // ...
 }
 \end{code}
-When scheduling, the class list is visited, starting from the higher priority class: if there is no process to schedule the next class is visited. This keeps going until something to schedule is found, then the correct function pointers are used to carry out the scheduler's jobs. 
+When scheduling, the class list is visited, starting from the higher priority class: if there is no process to schedule the next class is visited. This keeps going until something to schedule is found, then the correct function pointers are used to carry out the scheduler's jobs. In \verb|fair.c| we can find the declaration of the \verb|sched_class| specific for the fair class:
+\begin{code}
+/*
+ * All the scheduling class methods:
+ */
+const struct sched_class fair_sched_class = {
+	.next			= &idle_sched_class,
+	.enqueue_task		= enqueue_task_fair,
+	.dequeue_task		= dequeue_task_fair,
+	.yield_task		= yield_task_fair,
+	.yield_to_task		= yield_to_task_fair,
 
-This structure is a good reference to understand the code because it essentially lists all the main scheduler routines, which are covered in the next section.
+	.check_preempt_curr	= check_preempt_wakeup,
+
+	.pick_next_task		= pick_next_task_fair,
+	.put_prev_task		= put_prev_task_fair,
+
+#ifdef CONFIG_SMP
+	.select_task_rq		= select_task_rq_fair,
+	.migrate_task_rq	= migrate_task_rq_fair,
+
+	.rq_online		= rq_online_fair,
+	.rq_offline		= rq_offline_fair,
+
+	.task_dead		= task_dead_fair,
+	.set_cpus_allowed	= set_cpus_allowed_common,
+#endif
+
+	.set_curr_task          = set_curr_task_fair,
+	.task_tick		= task_tick_fair,
+	.task_fork		= task_fork_fair,
+
+	.prio_changed		= prio_changed_fair,
+	.switched_from		= switched_from_fair,
+	.switched_to		= switched_to_fair,
+
+	.get_rr_interval	= get_rr_interval_fair,
+
+	.update_curr		= update_curr_fair,
+
+#ifdef CONFIG_FAIR_GROUP_SCHED
+	.task_change_group	= task_change_group_fair,
+#endif
+};
+\end{code}
+This structure is a good reference to understand the code because it essentially lists all the main CFS scheduler routines, which are covered in the next section. 
 
 % https://www.tldp.org/LDP/tlk/kernel/processes.html
 \paragraph{mm\_struct} 
@@ -110,7 +153,7 @@ This list is actually organized in a binary tree, ordered by memory address, for
 
 For this reason, Linux uses \textit{on-demand paging}. When a process allocates virtual memory, Linux does not actually reserve physical memory for the process. Instead, it describes the virtual memory by creating a new \verb|vm_area_struct| data structure. This is linked into the process's list of virtual memory. When the process attempts to write to a virtual address within that new virtual memory region then the system will page fault. Linux looks to see if the virtual address referenced is in the current process's virtual address space. If it is, Linux creates the appropriate \textit{page table entries} (PTEs) and allocates a physical page of memory for this process. The code or data may need to be brought into that physical page from the filesystem or from the swap disk. The process can then be restarted at the instruction that caused the page fault and, this time as the memory physically exists, it may continue.\cite{tlk}
 
-\verb|mm_struct| has also a role in scheduling, because the \verb|mm|s of the two processes are switched upon context switch (Section TODO). The field \verb|mm| can also be set to \verb|NULL|: in this case the process is a kernel thread, free to use all the kernel space.
+\verb|mm_struct| has also a role in scheduling, because the \verb|mm|s of the two processes are switched upon context switch. The field \verb|mm| can also be set to \verb|NULL|: in this case the task is a kernel thread, free to use all the kernel space. This operation can be seen in the \verb|context_switch()| routine in Section \ref{sec:context_switch}.
 
 \paragraph{procfs}
 The information contained in these structures can be accessed from outside the kernel with specific tools (covered in detail in Chapter \ref{chap:ftrace}). One approach to accomplish this it to use \verb|procfs|. In short, \verb|procfs| is a special filesystem that contains all the kernel information about processes, making it easy to access it from user space. For example, it is possible to gather scheduling information about process with pid 1196 by executing \verb|cat /proc/1196/schedstat|. This gives the following human-readable output:
@@ -262,14 +305,13 @@ There are essentially two ways of prompting a reschedule:
     \item When the timeslice of the current process expires. When this occurs, the \verb|TIF_NEED_RESCHED|
     flag in the \verb|thread_info| structure of the current process is set, so the scheduler is
     invoked when the timer interrupt handler terminates.\cite{cesati} This rescheduling possibility is checked periodically, at each system tick.
-    \item When a task is added to the runqueue. When it happens, the kernel checks whether its dynamic priority is
-    greater than the priority of the currently running process. If it is, the execution of
-    current is interrupted and the scheduler is invoked to select another process to run
+    \item When a task is added to the runqueue. When it happens, the kernel checks whether its dynamic priority is greater than the priority of the currently running process. If it is, the wakeup sets \verb|TIF_NEED_RESCHED|, and the scheduler will eventually be invoked to select another process to run
     (usually the process that just became runnable).\cite{cesati} This rescheduling possibility is checked every time that a task is created or woken up.
 \end{itemize}
 The internal workings of these two procedures is illustrated, in order, in the two upcoming sections. There are other times in which a reschedule is prompted: indeed, \verb|schedule()| could be called like any other function, but this is done rarely in practice.
 
 \subsection{Periodic reschedule}
+\label{sec:periodic_reschedule}
 We will now analyze in detail how scheduling works and the most important functions involved. In the last section, we saw how the system can perform periodic functions in order to measure time. From the entry point \verb|scheduler_tick()|, the subsequent calls can be traced with \verb|ftrace|: a function/event tracer embedded in the kernel.
 
 The following script can trace function calls of any input kernel function. Function tracing with \verb|ftrace| is explained in detail in Chapter \ref{chap:ftrace}. For now, it is enough to know that this script simply sets \verb|ftrace| parameters before starting the trace. 
@@ -616,6 +658,7 @@ Finally, this function (called in \verb|check_preempt_tick()|) sets the \verb|TI
 This flag indicates that the current task needs to be rescheduled. When resuming the execution of a user process, the flag is checked and if it is set, the schedule function is called.
 
 \subsection{Reschedule when adding a task to the runqueue}
+\label{sec:runqueue_wakeup_reschedule}
 A task can be added to the runqueue in 2 cases: when it is created, and when it is woken up. The reason why it's important to reschedule upon creation/wakeup is interactivity. If the newly added process has less weight than the running task, then it is scheduled. For example, if we pressed a button on a text editor, we expect its process to wake up and be rescheduled immediately in order to respond to the key press. In practice, the reschedule would often take place because the text editor's vruntime is very small. Moreover, after having responded to the key press, it will go back to sleep, keeping his vruntime to a minimum.
 %CFS intuition here
 
@@ -691,7 +734,4 @@ Whether the task was just created or it was woken up from sleep, his \verb|task_
     \item Updates the load statistics of the entity and its group
     \item Calls \verb|__enqueue_entity()|, which inserts the entity of the \verb|task_struct| in the red-black tree representing the runqueue.
 \end{itemize}
-% TODO
-% \subsubsection{schedule()}
-
-% \subsubsection{context\_switch()}
+% schedule() and context_switch() are in the documentation chapter
