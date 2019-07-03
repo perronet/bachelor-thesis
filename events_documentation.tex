@@ -59,19 +59,18 @@ There are 24 events and 29 tracepoints where they are used. The output shows the
 \end{enumerate}
 
 \section{Events in \texttt{core.c}} 
-\dots (Work in progress) \dots
 \paragraph{\texttt{trace\_sched\_migrate\_task}}
-Tracepoint for a task being migrated.
+Tracepoint for a task being migrated from \verb|orig_cpu| to \verb|dest_cpu|.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *p|
+    \item \verb|struct task_struct *p| -- Migrated task
     \item \verb|int dest_cpu|
 \end{itemize}
 
 \textbf{Trace output}
 \begin{itemize}
-    \item \verb|char *comm|
+    \item \verb|char *comm| -- Command string that spawned the process
     \item \verb|pid_t pid|
     \item \verb|int prio|
     \item \verb|int orig_cpu, dest_cpu|
@@ -100,7 +99,7 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu){
 	WARN_ON_ONCE(!cpu_online(new_cpu));
 #endif 
 
-	trace_sched_migrate_task(p, new_cpu);
+	trace_sched_migrate_task(p, new_cpu); // Tracepoint
 
 	if (task_cpu(p) != new_cpu) {
 		if (p->sched_class->migrate_task_rq)
@@ -113,10 +112,10 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu){
 	__set_task_cpu(p, new_cpu);
 }
 \end{code}
-Migrate a task to \verb|new_cpu|.
+This function migrates a task to \verb|new_cpu|, essentially changing its runqueue (in the subroutine \verb|__set_task_cpu()|).
   
 \paragraph{\texttt{trace\_sched\_swap\_numa}}
-//TODO
+Triggered when two task in two different CPUs are swapped. Takes NUMA into account.
 
 \textbf{Parameters}
 \begin{itemize}
@@ -128,8 +127,8 @@ Migrate a task to \verb|new_cpu|.
 
 \textbf{Trace output}
 \begin{itemize}
-    \item \verb|pid_t src_pid, src_tgid, src_ngid|
-    \item \verb|int src_cpu, src_nid|
+    \item \verb|pid_t src_pid, src_tgid, src_ngid| -- pid, thread group id, and NUMA group id
+    \item \verb|int src_cpu, src_nid| -- nid is the NUMA node id of the cpu \verb|src_cpu|
     \item \verb|pid_t dst_pid, dst_tgid, dst_ngid|
     \item \verb|int dst_cpu, dst_nid|
 \end{itemize}
@@ -179,13 +178,14 @@ out:
 	return ret;
 }
 \end{code}
+\verb|stop_two_cpus()| stops the two CPUs and runs \verb|migrate_swap_stop| with arguments \verb|arg| on the first CPU, returns when both are done.
 
 \paragraph{\texttt{trace\_sched\_wait\_task}}
-Tracepoint for waiting on task to unschedule:
+Tracepoint for waiting on task to unschedule.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *p|
+    \item \verb|struct task_struct *p| -- Waited task
 \end{itemize}
 
 \textbf{Trace output (\texttt{sched\_process\_template})}
@@ -305,13 +305,14 @@ unsigned long wait_task_inactive(struct task_struct *p, long match_state){
 	return ncsw;
 }
 \end{code}
+This function essentially busywaits until the task gets unscheduled. Note that \verb|nvcsw| is the context switch count, which is returned if the process did unschedule. The event is triggered once the lock on the runqueue is held: this doesn't mean that the process did actually unschedule at that point, many other checks still must be done.
 
 \paragraph{\texttt{trace\_sched\_wakeup}}
-Tracepoint called when the task is actually woken\\ (\verb|p->state == TASK\_RUNNING|). It it not always called from the waking context.
+Tracepoint called when the task is actually woken up\\ (\verb|p->state == TASK_RUNNING|). When any task wakes up, wakeup preemption is checked: at that point in the code, this event is triggered. It it not always called from the waking context.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *p|
+    \item \verb|struct task_struct *p| -- Woken task
 \end{itemize}
 
 \textbf{Trace output (\texttt{sched\_wakeup\_template})}
@@ -329,9 +330,8 @@ Tracepoint called when the task is actually woken\\ (\verb|p->state == TASK\_RUN
 /*
  * Mark the task runnable and perform wakeup-preemption.
  */
-static void ttwu_do_wakeup(struct rq *rq, struct task_struct *p, int wake_flags,
-			   struct rq_flags *rf){
-	check_preempt_curr(rq, p, wake_flags);
+static void ttwu_do_wakeup(struct rq *rq, struct task_struct *p, int wake_flags, struct rq_flags *rf){
+	check_preempt_curr(rq, p, wake_flags); // Checks if it should be preempted, if yes sets TIF_NEED_RESCHED
 	p->state = TASK_RUNNING;
 	trace_sched_wakeup(p); // Tracepoint
 
@@ -360,14 +360,14 @@ static void ttwu_do_wakeup(struct rq *rq, struct task_struct *p, int wake_flags,
 #endif
 }
 \end{code}
-In this point in the code, the task is marked as runnable and then wakeup preemption is performed. ``Wakeup preemption'' refers to the kind of preemption discussed in Section \ref{sec:runqueue_wakeup_reschedule}, where this event was also mentioned (Subsection "A task is woken up").
+``\verb|ttwu|'' means ``try to wake up''. In this point in the code, the task is marked as runnable and then wakeup preemption is performed. ``Wakeup preemption'' refers to the kind of preemption discussed in Section \ref{sec:runqueue_wakeup_reschedule}, where this event was also mentioned (Subsection ``A task is woken up'').
   
 \paragraph{\texttt{trace\_sched\_wake\_idle\_without\_ipi}}
-Tracepoint for waking a polling cpu without an IPI.
+Tracepoint for waking a polling cpu without an IPI. An IPI is a \textit{inter processor interrupt}, an interrupt sent from one processor to another (which means we're on  a SMP system). IPIs are used, for example, when the system is being shut down by one processor, and all the other processors need to be notified. In our case, sending an IPI is needed if the task to reschedule is on a different CPU than the one we're running. If this fails, is is because that CPU is polling for \verb|TIF_NEED_RESCHED| (\verb|TIF_POLLING_NRFLAG| is set, \verb|NRFLAG| = Need Rescheduling Flag). In this case, we wake that CPU without using an IPI, and the event is triggered.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|int cpu|
+    \item \verb|int cpu| -- Woken CPU
 \end{itemize}
 
 \textbf{Trace output}
@@ -376,28 +376,48 @@ Tracepoint for waking a polling cpu without an IPI.
 \end{itemize}
 
 \textbf{Usages}
+\label{sec:resched_curr}
 \begin{code}
 // ./kernel/sched/core.c:473:
-\end{code}
-\begin{code}
-// ./kernel/sched/core.c:545:
-\end{code}
-\begin{code}
-// ./kernel/sched/core.c:1798: 
-\end{code}
-\begin{code}
-// ./kernel/sched/core.c:1813:
-\end{code}
+/*
+ * resched_curr - mark rq's current task 'to be rescheduled now'.
+ *
+ * On UP this means the setting of the need_resched flag, on SMP it
+ * might also involve a cross-CPU call to trigger the scheduler on
+ * the target CPU.
+ */
+void resched_curr(struct rq *rq){
+	struct task_struct *curr = rq->curr;
+	int cpu;
 
-Called in the \verb|resched_curr| function in Section \ref{trace:wake_idle_without_ipi}.
+	lockdep_assert_held(&rq->lock);
+
+	if (test_tsk_need_resched(curr)) // The flag is already set, we're done
+		return;
+
+	cpu = cpu_of(rq);
+
+	if (cpu == smp_processor_id()) { // We are running on the same CPU as the task we reschedule
+		set_tsk_need_resched(curr);
+		set_preempt_need_resched();
+		return;
+	}
+
+	if (set_nr_and_not_polling(curr)) // Sets NEED_RESCHEDULE
+		smp_send_reschedule(cpu); // Sends IPI
+	else
+		trace_sched_wake_idle_without_ipi(cpu); // Tracepoint
+}
+\end{code}
+This is the \verb|resched_curr| function mentioned in Section \ref{trace:wake_idle_without_ipi}. The other 3 tracepoints (lines 545/1798/1813) are analogous to this one.
 
 \paragraph{\texttt{trace\_sched\_waking}}
 Tracepoint called when waking a task; this tracepoint is guaranteed to be called from the waking context. This means that the task will be in the \verb|TASK_WAKING| state.
-This event was mentioned in Section \ref{trace:sched_waking} "A task is woken up".
+This event was mentioned in Section \ref{trace:sched_waking} ``A task is woken up''.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *p|
+    \item \verb|struct task_struct *p| -- Waking task
 \end{itemize}
 
 \textbf{Trace output (\texttt{sched\_wakeup\_template})}
@@ -466,7 +486,6 @@ out:
 	return success;
 }
 \end{code}
-try\_to\_wake\_up - wake up a thread
 \begin{code}
 // ./kernel/sched/core.c:2100
 /**
@@ -518,14 +537,13 @@ out:
 	raw_spin_unlock(&p->pi_lock);
 }
 \end{code}
-try\_to\_wake\_up\_local - try to wake up a local task with rq lock held
 
 \paragraph{\texttt{trace\_sched\_wakeup\_new}}
-Tracepoint for waking up a new task:
+Tracepoint for waking up a new task.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *p|
+    \item \verb|struct task_struct *p| -- New task that is woken up for the first time
 \end{itemize}
 
 \textbf{Trace output (\texttt{sched\_wakeup\_template})}
@@ -587,16 +605,16 @@ void wake_up_new_task(struct task_struct *p){
 	task_rq_unlock(rq, p, &rf);
 }
 \end{code}
-This function performs wakeup preemption for newly created tasks; it is called the first time a process wakes up. This event was mentioned in Section \ref{trace:sched_wakeup_new} "A new process is created".
+This function performs wakeup preemption for newly created tasks; it is called the first time a process wakes up. This event was mentioned in Section \ref{trace:sched_wakeup_new} ``A new process is created''.
    
 \paragraph{\texttt{trace\_sched\_switch}}
-Tracepoint for task switches, performed by the scheduler.
+Tracepoint for context switches, performed by the scheduler.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|bool preempt|
-    \item \verb|struct task_struct *prev|
-    \item \verb|struct task_struct *next|
+    \item \verb|bool preempt| -- Is preemption enabled while performing the schedule?
+    \item \verb|struct task_struct *prev| -- Preempted task
+    \item \verb|struct task_struct *next| -- Newly scheduled task
 \end{itemize}
 
 \textbf{Trace output}
@@ -605,7 +623,7 @@ Tracepoint for task switches, performed by the scheduler.
     \item \verb|pid_t prev_pid|
     \item \verb|int prev_prio|
     \item \verb|long prev_state|
-    \item \verb|char next_comm|
+    \item \verb|char *next_comm|
     \item \verb|pid_t next_pid|
     \item \verb|int next_prio|
 \end{itemize}
@@ -613,11 +631,13 @@ Tracepoint for task switches, performed by the scheduler.
 \textbf{Usages}
 
 The call chain is:
-\begin{enumerate}
-    \item \verb|schedule()|
-    \item \verb|__schedule()|
-    \item \verb|context_switch()|
-\end{enumerate}
+\begin{code}
+schedule(){
+    __schedule(){
+        context_switch();
+    }
+}
+\end{code}
 The tracepoint is in \verb|__schedule()|, just before calling \verb|context_switch()|.
 \begin{code}
 asmlinkage __visible void __sched schedule(void) {
@@ -625,7 +645,7 @@ asmlinkage __visible void __sched schedule(void) {
 
 	sched_submit_work(tsk);
 	do {
-		preempt_disable();
+		preempt_disable(); // Preemption disabled while scheduling
 		__schedule(false);
 		sched_preempt_enable_no_resched();
 	} while (need_resched());
@@ -666,7 +686,7 @@ static void __sched notrace __schedule(bool preempt) {
 	balance_callback(rq);
 }
 \end{code}
-\verb|context_switch()| is called when scheduling in order to perform complete the task switch. 
+\verb|context_switch()| is called when scheduling in order to complete the task switch. 
 Internally, \verb|context_switch| performs two operations:
 \begin{itemize}
     \item Switches the virtual memory areas of the two processes (\verb|mm_struct|)
@@ -721,41 +741,100 @@ context_switch(struct rq *rq, struct task_struct *prev,
 \end{code}
 
 \paragraph{\texttt{trace\_sched\_pi\_setprio}}
-Tracepoint for showing priority inheritance modifying a tasks priority.
+Tracepoint for showing priority inheritance (\verb|pi|) modifying a tasks priority. Priority inheritance is a technique to avoid a scenario called priority inversion, in which a high priority task is indirectly preempted by a lower priority task effectively inverting the relative priorities of the two tasks (it happens when the tasks share a resource). With priority inheritance, when a high priority task has to wait for some resource shared with an executing low priority task, the low priority task is temporarily assigned the priority of the highest waiting priority task for the duration of its own use of the shared resource.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *tsk|
-    \item \verb|struct task_struct *pi_task|
+    \item \verb|struct task_struct *tsk| -- Task to boost
+    \item \verb|struct task_struct *pi_task| -- Donor task
 \end{itemize}
 
 \textbf{Trace output}
 \begin{itemize}
     \item \verb|char *comm|
     \item \verb|pid_t pid|
-    \item \verb|int oldprio|
-    \item \verb|int newprio|
+    \item \verb|int oldprio| -- \verb|tsk|'s old priority
+    \item \verb|int newprio| -- \verb|tsk|'s boosted priority
 \end{itemize}
 
 \textbf{Usages}
 \begin{code}
 // ./kernel/sched/core.c:3797
+/*
+ * rt_mutex_setprio - set the current priority of a task
+ * @p: task to boost
+ * @pi_task: donor task
+ *
+ * This function changes the 'effective' priority of a task. It does
+ * not touch ->normal_prio like __setscheduler().
+ *
+ * Used by the rt_mutex code to implement priority inheritance
+ * logic. Call site only calls if the priority of the task changed.
+ */
+void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task){
+	int prio, oldprio, queued, running, queue_flag =
+		DEQUEUE_SAVE | DEQUEUE_MOVE | DEQUEUE_NOCLOCK;
+	const struct sched_class *prev_class;
+	struct rq_flags rf;
+	struct rq *rq;
+
+	/* XXX used to be waiter->prio, not waiter->task->prio */
+	prio = __rt_effective_prio(pi_task, p->normal_prio);
+
+	/*
+	 * If nothing changed; bail early.
+	 */
+	if (p->pi_top_task == pi_task && prio == p->prio && !dl_prio(prio))
+		return;
+
+	rq = __task_rq_lock(p, &rf);
+	update_rq_clock(rq);
+        // ...
+	p->pi_top_task = pi_task;
+
+	/*
+	 * For FIFO/RR we only need to set prio, if that matches we're done.
+	 */
+	if (prio == p->prio && !dl_prio(prio))
+		goto out_unlock;
+        // ...
+	if (unlikely(p == rq->idle)) {
+		WARN_ON(p != rq->curr);
+		WARN_ON(p->pi_blocked_on);
+		goto out_unlock;
+	}
+
+	trace_sched_pi_setprio(p, pi_task); // Tracepoint
+	oldprio = p->prio;
+
+	if (oldprio == prio)
+		queue_flag &= ~DEQUEUE_MOVE;
+
+	prev_class = p->sched_class;
+	queued = task_on_rq_queued(p);
+	running = task_current(rq, p);
+	if (queued)
+		dequeue_task(rq, p, queue_flag);
+	if (running)
+		put_prev_task(rq, p);
+        // ...
+}
 \end{code}
 
 \paragraph{\texttt{trace\_sched\_move\_numa}}
-Tracks migration of tasks from one runqueue to another. Can be used to detect if automatic NUMA balancing is bouncing between nodes.
+Tracks migration of tasks from one CPU to another (basically to a different runqueue). Can be used to detect if automatic NUMA balancing is bouncing between nodes.\\The event is almost identical to \texttt{trace\_sched\_swap\_numa}, but it's a single task being migrated.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *tsk|
+    \item \verb|struct task_struct *tsk| -- Migrated task
     \item \verb|int src_cpu|
     \item \verb|int dst_cpu|
 \end{itemize}
 
 \textbf{Trace output (\texttt{sched\_move\_task\_template})}
 \begin{itemize}
-    \item \verb|pid_t pid, tgid, ngid|
-    \item \verb|int src_cpu, src_nid|
+    \item \verb|pid_t pid, tgid, ngid| -- pid, thread group id, and NUMA group id
+    \item \verb|int src_cpu, src_nid| -- nid is the NUMA node id of the cpu \verb|src_cpu|
     \item \verb|int dst_cpu, dst_nid|
 \end{itemize}
 
@@ -779,40 +858,103 @@ int migrate_task_to(struct task_struct *p, int target_cpu) {
 	return stop_one_cpu(curr_cpu, migration_cpu_stop, &arg);
 }
 \end{code}
+The subroutine \verb|stop_one_cpu()| stops the target CPU and runs \verb|migration_cpu_stop| with arguments \verb|arg| on the CPU, returns when the execution is complete. It essentially works like \verb|stop_two_cpus()|.
 
 \section{Events in \texttt{fair.c}}
-\dots (Work in progress) \dots
 \paragraph{\texttt{trace\_sched\_stick\_numa}}
-//TODO
+Triggered when a NUMA migration fails. 
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *tsk|
+    \item \verb|struct task_struct *tsk| -- (not) Migrated task
     \item \verb|int src_cpu|
     \item \verb|int dst_cpu|
 \end{itemize}
 
 \textbf{Trace output (\texttt{sched\_move\_task\_template})}
 \begin{itemize}
-    \item \verb|pid_t pid, tgid, ngid|
-    \item \verb|int src_cpu, src_nid|
+    \item \verb|pid_t pid, tgid, ngid| -- pid, thread group id, and NUMA group id
+    \item \verb|int src_cpu, src_nid| -- nid is the NUMA node id of the cpu \verb|src_cpu|
     \item \verb|int dst_cpu, dst_nid|
 \end{itemize}
 
 \textbf{Usages}
 \begin{code}
-// ./kernel/sched/fair.c:1836
-// ./kernel/sched/fair.c:1844
+// ./kernel/sched/fair.c:1836/1844
+static int task_numa_migrate(struct task_struct *p)
+{
+	struct task_numa_env env = {
+		.p = p,
+
+		.src_cpu = task_cpu(p),
+		.src_nid = task_node(p),
+
+		.imbalance_pct = 112,
+
+		.best_task = NULL,
+		.best_imp = 0,
+		.best_cpu = -1,
+	};
+	struct sched_domain *sd;
+	struct rq *best_rq;
+	unsigned long taskweight, groupweight;
+	int nid, ret, dist;
+	long taskimp, groupimp;
+        // ...
+	/*
+	 * Cpusets can break the scheduler domain tree into smaller
+	 * balance domains, some of which do not cross NUMA boundaries.
+	 * Tasks that are "trapped" in such domains cannot be migrated
+	 * elsewhere, so there is no point in (re)trying.
+	 */
+	if (unlikely(!sd)) {
+		sched_setnuma(p, task_node(p));
+		return -EINVAL;
+	}
+
+	env.dst_nid = p->numa_preferred_nid;
+	dist = env.dist = node_distance(env.src_nid, env.dst_nid);
+	taskweight = task_weight(p, env.src_nid, dist);
+	groupweight = group_weight(p, env.src_nid, dist);
+	update_numa_stats(&env.src_stats, env.src_nid);
+	taskimp = task_weight(p, env.dst_nid, dist) - taskweight;
+	groupimp = group_weight(p, env.dst_nid, dist) - groupweight;
+	update_numa_stats(&env.dst_stats, env.dst_nid);
+
+	task_numa_find_cpu(&env, taskimp, groupimp);
+        // ... looks for NUMA nodes ...
+	/* No better CPU than the current one was found. */
+	if (env.best_cpu == -1)
+		return -EAGAIN;
+
+	best_rq = cpu_rq(env.best_cpu);
+	if (env.best_task == NULL) {
+		ret = migrate_task_to(p, env.best_cpu);
+		WRITE_ONCE(best_rq->numa_migrate_on, 0);
+		if (ret != 0)
+			trace_sched_stick_numa(p, env.src_cpu, env.best_cpu); // Tracepoint
+		return ret;
+	}
+
+	ret = migrate_swap(p, env.best_task, env.best_cpu, env.src_cpu);
+	WRITE_ONCE(best_rq->numa_migrate_on, 0);
+
+	if (ret != 0)
+		trace_sched_stick_numa(p, env.src_cpu, task_cpu(env.best_task)); // Tracepoint
+	put_task_struct(env.best_task);
+	return ret;
+}
 \end{code}
+This function tries to migrate the task to a better CPU, if it fails, the event is triggered. The actual migration happens in \verb|migrate_task_to()|.
 
 \paragraph{\texttt{trace\_sched\_stat\_runtime}}
 Tracepoint for accounting runtime and vruntime.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *tsk|
-    \item \verb|u64 runtime|
-    \item \verb|u64 vruntime|    
+    \item \verb|struct task_struct *tsk| -- Task with updated stats
+    \item \verb|u64 runtime| -- Updated true runtime
+    \item \verb|u64 vruntime| -- Updated virtual runtime
 \end{itemize}
 
 \textbf{Trace output}
@@ -831,8 +973,8 @@ Tracepoint for accounting wait time. That is, the time the task is runnable but 
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *tsk|
-    \item \verb|u64 delay|
+    \item \verb|struct task_struct *tsk| -- Task with updated stats
+    \item \verb|u64 delay| -- Wait time
 \end{itemize}
 
 \textbf{Trace output (\texttt{sched\_stat\_template})}
@@ -878,18 +1020,18 @@ update_stats_wait_end(struct cfs_rq *cfs_rq, struct sched_entity *se){
 \end{code}
 
 \paragraph{\texttt{trace\_sched\_stat\_*}(\texttt{sleep/iowait/blocked})} 
-The purpose of these three events is very similar: account updated statistics, like \texttt{trace\_sched\_stat\_runtime}.
+The purpose of these three events is very similar: account updated statistics, like \texttt{trace\_sched\_stat\_runtime} and \texttt{trace\_sched\_stat\_wait}.
 They also have the same parameters and output format (same output template).
 \begin{itemize}
     \item \texttt{trace\_sched\_stat\_sleep} -- Tracepoint for accounting sleep time: the time the task is not runnable, including iowait.
     \item \texttt{trace\_sched\_stat\_iowait} -- Tracepoint for accounting iowait time: the time the task is not runnable due to waiting on IO to complete.
-    \item \texttt{trace\_sched\_stat\_blocked} -- Tracepoint for accounting blocked time: time the task is in uninterruptible.
+    \item \texttt{trace\_sched\_stat\_blocked} -- Tracepoint for accounting blocked time: time the task is in \verb|TASK_UNINTERRUPTIBLE|.
 \end{itemize}
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *tsk|
-    \item \verb|u64 delay|
+    \item \verb|struct task_struct *tsk| -- Task with updated stats
+    \item \verb|u64 delay| -- Sleep/iowait/blocked time
 \end{itemize}
 
 \textbf{Trace output (\texttt{sched\_stat\_template})}
@@ -900,7 +1042,6 @@ They also have the same parameters and output format (same output template).
 \end{itemize}
 
 \textbf{Usages}\\
-Their tracepoints are all located in the same function.
 \begin{code}
 // ./kernel/sched/fair.c:925/944/947
 static inline void
@@ -970,23 +1111,42 @@ update_stats_enqueue_sleeper(struct cfs_rq *cfs_rq, struct sched_entity *se) {
 	}
 }
 \end{code}
+Their tracepoints are all located in the same function. Its purpouse is to do accounting for scheduling statistics. It is executed when a sleeping task is woken up upon insertion in the runqueue, to account how much time it waited for it to happen. The task could have been sleeping because of iowait or being blocked: the function treats them as separate cases. \verb|update_stats_enqueue_sleeper()| is called from \verb|update_stats_enqueue()|:
+\begin{code}
+/*
+ * Task is being enqueued - update stats:
+ */
+static inline void
+update_stats_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags) {
+	if (!schedstat_enabled())
+		return;
+	/*
+	 * Are we enqueueing a waiting task? (for current tasks
+	 * a dequeue/enqueue event is a NOP)
+	 */
+	if (se != cfs_rq->curr)
+		update_stats_wait_start(cfs_rq, se);
+
+	if (flags & ENQUEUE_WAKEUP)
+		update_stats_enqueue_sleeper(cfs_rq, se);
+}
+\end{code}
 
 \section{Events in other source files}
-\dots (Work in progress) \dots
 \paragraph{\texttt{trace\_sched\_process\_exec}}
-Tracepoint for exec.
+Tracepoint for \verb|exec()|. The function replaces the stack and process image with the new one, then assigns a new pid. This function is used in syscall handlers such as \verb|__do_execve_file()|. 
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *p|
-    \item \verb|pid_t old_pid|
-    \item \verb|struct linux_binprm *bprm|
+    \item \verb|struct task_struct *p| -- New process image, which will replace the current one
+    \item \verb|pid_t old_pid| -- Replaced process's pid (\verb|current->pid|)
+    \item \verb|struct linux_binprm *bprm| -- This structure is used to hold the arguments that are used when loading binaries (\verb|brp| = BinaRy Parameter).
 \end{itemize}
 
 \textbf{Trace output}
 \begin{itemize}
-    \item \verb|char *filename| %bprm->filename
-    \item \verb|pid_t pid|
+    \item \verb|char *filename| -- The loaded binary's name (\verb|bprm->filename|)
+    \item \verb|pid_t pid| -- New pid (simply \verb|p->pid|)
     \item \verb|pid_t old_pid|
 \end{itemize}
 
@@ -1014,15 +1174,13 @@ static int exec_binprm(struct linux_binprm *bprm){
 	return ret;
 }
 \end{code}
-\verb|exec_binprm(struct linux_binprm *bprm)|
-load binaries using bprm(binary parameter)
   
 \paragraph{\texttt{trace\_sched\_process\_wait}}
-Tracepoint for a waiting task.
+Tracepoint for a waiting task. Located in the \verb|wait()| system call handler.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct pid *pid|
+    \item \verb|struct pid *pid| -- Waiting task
 \end{itemize}
 
 \textbf{Trace output}
@@ -1094,7 +1252,7 @@ Tracepoint for freeing a task.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *p|
+    \item \verb|struct task_struct *p| -- Task to be freed
 \end{itemize}
 
 \textbf{Trace output (\texttt{sched\_process\_template})}
@@ -1115,14 +1273,14 @@ static void delayed_put_task_struct(struct rcu_head *rhp){
 	put_task_struct(tsk);
 }
 \end{code}
-Deallocate \verb|task_struct|
+Deallocates \verb|task_struct|.
   
 \paragraph{\texttt{trace\_sched\_process\_exit}}
-Tracepoint for a task exiting.
+Tracepoint for a task exiting. Located in the \verb|exit()| system call handler.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *p|
+    \item \verb|struct task_struct *p| -- Exiting task
 \end{itemize}
 
 \textbf{Trace output (\texttt{sched\_process\_template})}
@@ -1132,7 +1290,7 @@ Tracepoint for a task exiting.
     \item \verb|int prio|
 \end{itemize}
 
-\textbf{Usages} %TODO trim this function
+\textbf{Usages} 
 \begin{code}
 // ./kernel/exit.c:866
 void __noreturn do_exit(long code){
@@ -1168,58 +1326,14 @@ void __noreturn do_exit(long code){
 	 */
 	if (unlikely(tsk->flags & PF_EXITING)) {
 		pr_alert("Fixing recursive fault but reboot is needed!\n");
-		/*
-		 * We can do this unlocked here. The futex code uses
-		 * this flag just to verify whether the pi state
-		 * cleanup has been done or not. In the worst case it
-		 * loops once more. We pretend that the cleanup was
-		 * done as there is no way to return. Either the
-		 * OWNER_DIED bit is set by now or we push the blocked
-		 * task into the wait for ever nirwana as well.
-		 */
+        // ...
 		tsk->flags |= PF_EXITPIDONE;
 		set_current_state(TASK_UNINTERRUPTIBLE);
 		schedule();
 	}
 
 	exit_signals(tsk);  /* sets PF_EXITING */
-	/*
-	 * Ensure that all new tsk->pi_lock acquisitions must observe
-	 * PF_EXITING. Serializes against futex.c:attach_to_pi_owner().
-	 */
-	smp_mb();
-	/*
-	 * Ensure that we must observe the pi_state in exit_mm() ->
-	 * mm_release() -> exit_pi_state_list().
-	 */
-	raw_spin_lock_irq(&tsk->pi_lock);
-	raw_spin_unlock_irq(&tsk->pi_lock);
-
-	if (unlikely(in_atomic())) {
-		pr_info("note: %s[%d] exited with preempt_count %d\n",
-			current->comm, task_pid_nr(current),
-			preempt_count());
-		preempt_count_set(PREEMPT_ENABLED);
-	}
-
-	/* sync mm's RSS info before statistics gathering */
-	if (tsk->mm)
-		sync_mm_rss(tsk->mm);
-	acct_update_integrals(tsk);
-	group_dead = atomic_dec_and_test(&tsk->signal->live);
-	if (group_dead) {
-#ifdef CONFIG_POSIX_TIMERS
-		hrtimer_cancel(&tsk->signal->real_timer);
-		exit_itimers(tsk->signal);
-#endif
-		if (tsk->mm)
-			setmax_mm_hiwater_rss(&tsk->signal->maxrss, tsk->mm);
-	}
-	acct_collect(code, group_dead);
-	if (group_dead)
-		tty_audit_exit();
-	audit_free(tsk);
-
+        // ...
 	tsk->exit_code = code;
 	taskstats_exit(tsk, group_dead);
 
@@ -1254,58 +1368,19 @@ void __noreturn do_exit(long code){
 	 * FIXME: do that only when needed, using sched_exit tracepoint
 	 */
 	flush_ptrace_hw_breakpoint(tsk);
-
-	exit_tasks_rcu_start();
-	exit_notify(tsk, group_dead);
-	proc_exit_connector(tsk);
-	mpol_put_task_policy(tsk);
-#ifdef CONFIG_FUTEX
-	if (unlikely(current->pi_state_cache))
-		kfree(current->pi_state_cache);
-#endif
-	/*
-	 * Make sure we are holding no locks:
-	 */
-	debug_check_no_locks_held();
-	/*
-	 * We can do this unlocked here. The futex code uses this flag
-	 * just to verify whether the pi state cleanup has been done
-	 * or not. In the worst case it loops once more.
-	 */
-	tsk->flags |= PF_EXITPIDONE;
-
-	if (tsk->io_context)
-		exit_io_context(tsk);
-
-	if (tsk->splice_pipe)
-		free_pipe_info(tsk->splice_pipe);
-
-	if (tsk->task_frag.page)
-		put_page(tsk->task_frag.page);
-
-	validate_creds_for_do_exit(tsk);
-
-	check_stack_usage();
-	preempt_disable();
-	if (tsk->nr_dirtied)
-		__this_cpu_add(dirty_throttle_leaks, tsk->nr_dirtied);
-	exit_rcu();
-	exit_tasks_rcu_finish();
-
+        // ...
 	lockdep_free_task(tsk);
 	do_task_dead();
 }
 \end{code}
-
-%MP: dove c'è il tracepoint della exit ci sta un panic(). mostralo e citalo nel primo capitolo
   
 \paragraph{\texttt{trace\_sched\_process\_fork}}
-Tracepoint for \verb|do_fork|.
+Tracepoint for \verb|fork()|. Located in the \verb|fork()| system call handler.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *parent|
-    \item \verb|struct task_struct *child|
+    \item \verb|struct task_struct *parent| -- Parent task
+    \item \verb|struct task_struct *child| -- Newly spawned child task
 \end{itemize}
 
 \textbf{Trace output}
@@ -1395,15 +1470,14 @@ long _do_fork(unsigned long clone_flags,
 	return nr;
 }
 \end{code}
-
-Section \ref{trace:sched_process_fork}
+\verb|clone_flags| is the \verb|flags| parameter of the \verb|clone()| system call. With this parameter it's possible to spawn a thread or an entire new process. This event was mentioned in Section \ref{trace:sched_process_fork}.
     
 \paragraph{\texttt{trace\_sched\_process\_hang}}
 Detect hung task.
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *tsk|
+    \item \verb|struct task_struct *tsk| -- Hung task
 \end{itemize}
 
 \textbf{Trace output}
@@ -1481,7 +1555,7 @@ Kernel thread for detecting tasks stuck in D state
 
 \textbf{Parameters}
 \begin{itemize}
-    \item \verb|struct task_struct *t|
+    \item \verb|struct task_struct *t| -- Stopped kernel thread
 \end{itemize}
 
 \textbf{Trace output}

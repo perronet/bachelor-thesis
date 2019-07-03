@@ -1,19 +1,2 @@
 \chapter{Abstract}
-This thesis is about process scheduling and its implementation in the Linux kernel. Moreover, it covers other the kernel architecture and the event tracing, since they are a crucial component needed for kernel debugging. %write here an excitiong oneliner about what we're gonna do in the thesis
-The focus is on illustrating the scheduler implementation in Linux kernel version 4.20.13 (released on 27--02--2019), as well as documenting scheduling-related events. In fact, both the kernel and the event tracing infrastructure are poorly documented.
-Since the kernel and the tracing support are tightly related to each other, it is challenging to document the events without understanding how the scheduler works. Hence, most of the events are mentioned and explained on the fly, while discussing kernel concepts.
-
-Examples of code are always provided, each piece of theory will have its implementation counterpart shown and explained.
-Most of the concepts are very easy to visualize once the code is split into its most significant parts
-and then dissected line by line; however, this is not an internals manual for development. 
-This thesis should be considered a guide. It's meant for people who are curious about the inner workings of the kernel
-but have never looked too much into it, its goal is to give interesting insights about the architecture of operating systems.
-The only prerequisite is to have some experience with C and know the very basics of GNU/Linux and operating systems.
-
-All references to the source code are from kernel version 4.20.13, the latest stable version at the time of writing. When discussing architecture dependent code it will be assumed that the architecture is x86. In the code, every comment spanning over multiple rows (\verb|/*...*/|) is written by the kernel developers, my comments will always be inline (\verb|//|).
-
-%Explain how the thesis is structured
-In the first part I will give a brief overview of the kernel and then explain some basic scheduling concepts.\\
-\dots (will write this at the end)
-\dots\\
-Here is a useful tool to quickly look up mentioned kernel functions for yourself \texttt{elixir.bootlin.com/linux/v4.20.13/source}. Another alternative is to download the whole source code from \texttt{kernel.org}, which is needed if you want to compile and load it. 
+The subject of this thesis is process scheduling in the Linux kernel, with a special focus on the Completely Fair Scheduler. A particular emphasis is placed on how groups of tasks are scheduled. And how the user can interact with them and control their resources. Chapter \ref{ch:introduction} analyzes the basics of the Linux kernel. It introduces the user to the design of the kernel and defines the notions useful for understanding the scheduling process. Chapter \ref{ch:sched} then describes the scheduler from a theoretical point of view, comparing it to previous implementations. And detailing how it handles single tasks. Chapter \ref{chap:implementation} covers the implementation of the scheduler. It analyzes some of the core functions involved in the scheduling process. Finally, chapter \ref{ch:cgroup} describes how the scheduler treats groups of processes, and what are the advantages of scheduling tasks as a group instead of singularly. This chapter also covers the basic working of \verb|cgroups|, and how they can be used to control the CPU resource for a group of tasks. This work is based on version 4.20.13 of the Linux kernel.

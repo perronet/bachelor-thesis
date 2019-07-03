@@ -6,8 +6,7 @@
 \paragraph{task\_struct}
 As mentioned in chapter \ref{ch:introduction}, each task in the system is represented \newline by a \verb|task_struct|, which contains all the information about it. Here we list some of the fields used by the scheduler, and then cover them in detail.
 \begin{itemize}
-    \item \verb|thread_info|. This struct is architecture dependant and can contain various fields. The most important for the scheduler is the \verb|flags| field. These flags are used to keep track of requests or signals from and for the task. \verb|TIF_SIGPENDING| means that the process has pending signals, \verb|TIF_MEMDIE| means that the process is being killed to reclaim memory. In particulare, there are two flags that are crucial for the scheduler: \verb|TIF_NEED_RESCHED| and \verb|TIF_POLLING_NRFLAG|. The first indicates that scheduling must be performed, and the second that the idle process is polling the \verb|TIF_NEED_RESCHED| flag.
-    %from cesati's book
+    \item \verb|thread_info|. This struct is architecture dependant and can contain various fields. The most important for the scheduler is the \verb|flags| field. These flags are used to keep track of requests or signals from and for the task. \verb|TIF_SIGPENDING| means that the process has pending signals, \verb|TIF_MEMDIE| means that the process is being killed to reclaim memory. In particular, there are two flags that are crucial for the scheduler: \verb|TIF_NEED_RESCHED| and \verb|TIF_POLLING_NRFLAG|. The first indicates that scheduling must be performed, and the second that the idle process is polling the \verb|TIF_NEED_RESCHED| flag. Note: \verb|TIF| simply means ``Thread InFormation''.
     \item \verb|state|. A long that represents the state of the task: -1 unrunnable, 0 runnable, $>0$ stopped. 
     \item \verb|on_rq|. Indicates if the process is on the runqueue.
     \item \verb|static_prio| and \verb|normal_prio|. The first is the priority used for real-time scheduling policies. If the task is scheduled under one of the normal scheduling policies \verb|static_prio| is set to zero and \verb|normal_prio| is used. This number is an internal representation used in the kernel, different from the priority value shown in user space.
@@ -655,7 +654,7 @@ It may seem strange that \verb|__calc_delta()| is used to compute both the times
 
 \paragraph{resched\_curr}\label{trace:wake_idle_without_ipi}
 Finally, this function (called in \verb|check_preempt_tick()|) sets the \verb|TIF_NEED_RESCHED| flag, located in the flags field of the struct \verb|thread_info| (Section \ref{sec:thread_info}). 
-This flag indicates that the current task needs to be rescheduled. When resuming the execution of a user process, the flag is checked and if it is set, the schedule function is called.
+This flag indicates that the current task needs to be rescheduled. When resuming the execution of a user process, the flag is checked and if it is set, the \verb|schedule()| function is called. The code of \verb|resched_curr()|, \verb|schedule()|, and \verb|context_switch()| is analyzed in Section \ref{sec:context_switch}.
 
 \subsection{Reschedule when adding a task to the runqueue}
 \label{sec:runqueue_wakeup_reschedule}
