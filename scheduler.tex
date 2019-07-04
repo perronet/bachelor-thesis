@@ -8,7 +8,7 @@ In order to decide which task to run and for how long, the scheduler has to cons
 
 \subsection{Objectives of the scheduler}
 
-The scheduler cannot simply choose the tasks in any order: there are some tasks that are highly time sensitive and need to be executed as fast as possible, and others that can wait longer without any consequence. This \textit{interactiveness} criteria is one of the most important aspects that the scheduler has to take into account.
+The scheduler cannot simply choose the tasks in any order: there are some tasks that are highly time-sensitive and need to be executed as fast as possible, and others that can wait longer without any consequence. This \textit{interactiveness} criteria is one of the most important aspects that the scheduler has to take into account.
 
 %minimize response time and maximize throughput
 \paragraph{Response time and throughput}
@@ -21,7 +21,7 @@ processes.
 
 %interactive tasks
 There are different types of tasks: a text editor, for example, will spend most of its time waiting for user input, and when the input arrives, the task should respond as fast as possible. We call this kind of task \textit{interactive}. Other types of tasks, on the other hand, could utilize the CPU all the time without ever sleeping.
-This means that the scheduler, not only needs to minimize the response time, but it should also give precedence to tasks that are highly interactive---especially on desktop systems.
+This means that the scheduler not only needs to minimize the response time, but it should also give precedence to tasks that are highly interactive---especially on desktop systems.
 %CPU bound vs IO bound
 
 %throughput 
@@ -31,7 +31,7 @@ Ideally, the scheduler should do as few process switches as possible. Preempting
 Another important property that needs to be achieved is \textit{fairness}. What it means is that any two tasks with the same priority should run for roughly the same amount of time. Indeed, a task with higher priority should have the precedence over a task with a lower one, but at the same time, every task should get at least some CPU time. A process that doesn't get any CPU time is said to \textit{starve}. In practice, this usually happens when a process with high priority monopolizes a CPU, starving all the other processes waiting for their turn.
 
 \subsection{Different workloads}  %https://lwn.net/Articles/230501/
-Linux is used in all sorts of machines, from desktop computers to high-end servers to mobile devices. For this reason, the workload can vary a lot. Ideally, the scheduler should have good results in every scenario with every different workload, but in practice, this is really hard to implement. Even a small tweak to the scheduler could advantage desktop users over server users or viceversa: in other words, it's difficult to make every user happy.\cite{nice_design} Nonetheless, Linux tries to achieve flexibility by implementing scheduling classes. Ingo Molnar, the creator of the modern Linux scheduler, writes in the patch notes 
+Linux is used in all sorts of machines, from desktop computers to high-end servers to mobile devices. For this reason, the workload can vary a lot. Ideally, the scheduler should have good results in every scenario with every different workload, but in practice, this is really hard to implement. Even a small tweak to the scheduler could advantage desktop users over server users or viceversa: in other words, it's difficult to make every user happy.\cite{nice_design} Nonetheless, Linux tries to achieve flexibility by implementing scheduling classes. Ingo Moln\'ar, the creator of the modern Linux scheduler, writes in the patch notes 
 ``[\dots Scheduling classes are] an extensible hierarchy of
 scheduler modules. These modules encapsulate scheduling policy
 details and are handled by the scheduler core without the core
@@ -95,14 +95,14 @@ The \textit{Completely Fair Scheduler} (CFS) is the default scheduler of Linux s
 In the $O(1)$ scheduler, runnable tasks are stored in two priority queues (\textit{run queues}): an active and an expired queue. Initially, all the tasks are inside the active queue. Then, the tasks run on the CPU, in order of priority, for the assigned timeslice: when it expires, the task is moved into the expired queue. Once all the tasks have finished their timeslice, the two queues swap roles and the process starts again.
 
 Prior to the introduction of the O(1) scheduler, there was another version of the scheduler that was much simpler. It worked well with a small number of tasks, but there were performance issues when working with many tasks. When the $O(1)$ scheduler was introduced its goal was to keep all the positive aspects of the previous scheduler, like good interactive performance and fairness, but improving the scalability. That is, improving the performance when dealing with a large number of tasks.
-This was achieved using only algorithms with constant complexity $O(1)$. Meaning that the $O(1)$ scheduler does not have to traverse all the list of runnable tasks when deciding which one to run. Instead, this decision always takes a constant amount of time, regardless of the number of tasks.
+This was achieved using only algorithms with constant complexity $O(1)$; meaning that the $O(1)$ scheduler does not have to traverse all the list of runnable tasks when deciding which one to run. Instead, this decision always takes a constant amount of time, regardless of the number of tasks.
 
 \paragraph{Priority} %What is the priority of a task
 Each user task has a priority which consists of a static and a bonus priority. The static priority, which corresponds to the nice value, can have a value from $-20$ to $19$. The bonus ranges from $-5$ to $+5$ and it is determined by the interactiveness of the task: if a task spends a large amount of time sleeping, the scheduler will boost its priority, on the other hand, if a task doesn't sleep much, it will get penalized. 
 The static priority and the bonus are then added to determine the dynamic priority, which is the priority looked by the scheduler when choosing the next process to run.
 
 \paragraph{Timeslice} %How are timeslices calulated
-The $O(1)$ scheduler is based on the concept of timeslice, this is the amount of time that a task runs on the CPU during a cycle. A new cycle begins when every task has been moved to the expired queue. Each priority level is mapped to a different timeslice: higher levels get mapped to more time while lower levels get mapped to less time. The timeslice can be expressed as a time quantity, but it's more usual to represent it as a percentage of the total time of a cycle.
+The $O(1)$ scheduler is based on the concept of timeslice, this is the amount of time that a task runs on the CPU during a cycle. A new cycle begins when every task has been moved to the expired queue. Each priority level is mapped to a different timeslice: higher levels get mapped to more time while lower levels get mapped to less time. The timeslice can be expressed as a time quantity or as a percentage of the total time of a cycle.
 
 %http://ijssst.info/Vol-15/No-3/data/3857a668.pdf Cita questo (on the fairness of O(1)), cerca heuristics
 % talk about heuristics! (sleep time etc)
@@ -112,10 +112,10 @@ A process that is marked as interactive (\verb|SCHED_NORMAL| rather than \verb|S
 active queue after it has expired its current timeslice. This is done 
 to improve the response time of the system. A task is
 also marked as interactive depending on its dynamic priority and its nice
-value. It is easier for a task with an higher priority to become interactive compared to task with a lower one. A task with a nice value of $-20$ it's marked as interactive
+value. It is easier for a task with a higher priority to become interactive compared to task with a lower one. A task with a nice value of $-20$ is marked as interactive
 even if it has a dynamic priority of $+3$, while a task with a nice
 value of $0$ has to have a dynamic priority of $-2$. With a nice level
-of $+19$ it is impossible for a task to be marked as interactive, independently from the dynamic priority. %hardcoded values, arbitrary
+of $+19$ it is impossible for a task to be marked as interactive, independently of the dynamic priority. %hardcoded values, arbitrary
 
 This approach is the biggest weakness of the O(1) scheduler: it generated unpredictable behavior and could cause some tasks to be marked as interactive even when they were not. Furthermore, the different kinds of complex heuristics made the code bigger and harder to understand and maintain.
 
@@ -139,7 +139,7 @@ rate. In the kernel, the tick rate is the constant \verb|HZ|, which is defined a
 With the advancements of
 computer hardware, this value increased, and today it's usually 1000 on desktop computers. With such a value, a jiffy is equivalent to 1 msec, meaning that a task with nice $+19$
 would get a timeslice of only 1 msec (only 0.1\% CPU time) and this would cause too frequent
-rescheduling, causing problems like cache trashing. The value of the
+rescheduling, causing problems like cache thrashing. The value of the
 minimum timeslice can be adjusted, but it is still \verb|HZ| dependent. More
 details on this topic can be found in Section~\ref{sec:timekeeping}.
 
@@ -147,7 +147,7 @@ details on this topic can be found in Section~\ref{sec:timekeeping}.
 Another problem, that can be noticed in the graph of
 Figure~\ref{fig:timeslice_vs_nice}, is that the behavior of the nice
 level depends on its absolute value. But the nice API only allows the nice to be changed by a relative amount. 
-This means that with the $O(1)$ scheduler, calling \verb|nice(1)| to increment the nice level of a task has different effects depending on the initial value. 
+This means that with the $O(1)$ scheduler, calling \verb|nice()| to increment the nice level of a task has different effects depending on the initial value. 
 
 The last problem was that tasks with negative nice values were not responsive enough: this was problematic for multimedia applications, which had to resort to run under \verb|SCHED_FIFO| rather than \verb|SCHED_NORMAL|. This approach caused another major problem because \verb|SCHED_FIFO|, as we stated earlier, is not starvation proof.
 
@@ -168,6 +168,7 @@ process starts again.
 RSDL doesn't measure the sleep time of the tasks to identify interactive tasks. Tasks that spend most of the time sleeping will consume a little portion of their quota. When they get woken up, they will probably be at a high priority level. Meaning that, in most cases, they only have to wait for the task that is currently running. This guarantees a low latency for interactive tasks, which will rise to high priorities in a natural way, getting rid of the heuristics. 
 
 \section{Completely Fair Scheduler (CFS)}
+\label{sec:CFS}
 The RDSL scheduler never made it into the kernel, but the CFS scheduler, which was developed by Ingo Moln\'ar\cite{ingo}, was inspired by RSDL.
 
 Like RSDL, CFS does not use fixed timeslices and does not use any heuristic
@@ -176,7 +177,7 @@ multitasking CPU on real hardware. Ideally every task receives
 $\frac 1n$ of the processor's time, with $n$ being the number of
 runnable tasks. This results in simpler code that can handle nice
 values better than the previous scheduler; the preemption time is no
-longer fixed like in the $O(1)$ scheduler, but it is variable.\cite{cfs_design} This approach solves the problem found in the $O(1)$ scheduler: the behaviour of nice levels is more consistent and independent from the tick-rate; increasing the nice value by one has the same effect regardless of the starting value. Each process gets
+longer fixed like in the $O(1)$ scheduler, but it is variable.\cite{cfs_design} This approach solves the problem found in the $O(1)$ scheduler: the behaviour of nice levels is more consistent and independent of the tick rate; increasing the nice value by one has the same effect regardless of the starting value. Each process gets
 assigned a portion of the CPU depending on its weight, which is
 determined by the nice of the task. %and the vruntime?
 %in CFS there is much more difference between SCHED_NORMAL and SCHED_BATCH ... \cite{ingo}
@@ -217,7 +218,7 @@ static const int prio_to_weight[40] = {
 \end{code}
 The expression of Eq.~\eqref{eq:weight_nice} is designed in such a way that an increase of 1 in the nice value roughly translates to a 10\% increase in assigned fraction of CPU.
 For example, if there are only 2 processes with the same nice value, they will get both $50\%$ of CPU time. If the nice of one of the processes is increased by one, then it will get $55\%$ of CPU time while the other will get only $45\%$.
-Figure~\ref{fig:weight_vs_nice} reports the plot of the function of Equation~\eqref{eq:weight_nice}.
+The figure below reports the plot of the function of Equation~\eqref{eq:weight_nice}.
 \begin{figure}[htb]
 \begin{tikzpicture}
   \begin{axis}[
@@ -251,7 +252,7 @@ We have now a function to calculate the $CPU_\%$ of a process given a difference
     CPU_\%(d)=\frac{1}{1+\left(\dfrac{4}{5}\right)^{d}}.
     \label{eq:cpu_frac_vs_diff}
 \end{equation}
-This function is plotted in Figure~\ref{fig:plot_cpu}.
+This function is plotted in the figure below.
 \begin{figure}[htb]
 \centering
 \begin{tikzpicture}
@@ -293,11 +294,11 @@ Remember that CFS tries to model an ideal multi-tasking CPU where each task runs
 \end{equation}
 Where \verb|delta_exec| is the absolute time that the task spent running, and \verb|weight_of_nice_0| is the weight corresponding to a task with nice zero. 
 
-For nice values less than 0 the weighting factor is $< 1$: vruntime is less than real time spent and it grows slower than real time. If the nice value is 0, the vruntime is equivalent to the actual time spent running on the CPU. This means that the virtual runtime of an high priority task will increase more slowly than the vruntime of a low priority one. So, in order to keep all the virtual runtimes at the same level, the high priority task will have to run for more time.
+For nice values less than 0 the weighting factor is $< 1$: vruntime is less than the real time spent and it grows slower than real time. If the nice value is 0, the vruntime is equivalent to the actual time spent running on the CPU. This means that the virtual runtime of a high priority task will increase more slowly than the vruntime of a low priority one. So, in order to keep all the virtual runtimes at the same level, the high priority task will have to run for more time.
 
 \paragraph{Running the next task}
 
-As stated before, the goal of CFS is to be as fair as possible with all the task. This means keeping all the task's vruntime as close as possible to each other. Following this logic, the task that deserves more than anyone to be executed next is the one with the smallest vruntime.
+Being as fair as possible with all the task means keeping all the tasks' vruntimes as close as possible to each other. Following this logic, the task that deserves more than anyone to be executed next is the one with the smallest vruntime.
 
 \subsection{Runqueue}
 When a task goes to sleep, it is removed from the runqueue. While sleeping, the virtual runtime of a task remains the same, while the other tasks will continue to increase their own vruntime. If the task is woken up and re-inserted into the runqueue with the same virtual runtime it had before, it would have a significantly higher priority compared to the task that remained on the runqueue: this creates a situation of unfairness, where a sleeping task gets too much priority.
@@ -339,7 +340,7 @@ The graph shows how the performance gained by adding processors depends on the t
 
 Let's consider a single CPU with multiple cores. To achieve the best possible performance, the workload should be spread evenly between the cores, and there shouldn't be any core that does significantly less work than another. It is up to the scheduler to keep the load of each core balanced.
 
-How is the load measured? The first option is to use the weights of the task. The load of a core would be the sum of the weights of its tasks, but this approach doesn't work very well. Suppose that we have 4 tasks with the same priority, 2 are CPU intensive and 2 spend most of their time sleeping, and we want to balance the load between 2 processors. If we use only the weights of the tasks to balance, both the CPU intensive tasks could get assigned to one core, making it always busy, while the other core would be almost always idle as both of his tasks spend most of their time waiting. This approach doesn't take into consideration the nature of the tasks (CPU bound vs I/O bound). To effectively measure the load, we need to keep track of the amount of time that a task spends sleeping. Hence, the load of a task becomes a combination of its weight and its average CPU utilization, and the load of the a core is the sum of the loads of its tasks. Since the CPU utilization of a task can vary, its load is constantly updated.
+How is the load measured? The first option is to use the weights of the task. The load of a core would be the sum of the weights of its tasks, but this approach doesn't work very well. Suppose that we have 4 tasks with the same priority, 2 are CPU intensive and 2 spend most of their time sleeping, and we want to balance the load between 2 processors. If we use only the weights of the tasks to balance, both the CPU intensive tasks could get assigned to one core, making it always busy, while the other core would be almost always idle as both of his tasks spend most of their time waiting. This approach doesn't take into consideration the nature of the tasks (CPU bound vs I/O bound). To effectively measure the load, we need to keep track of the amount of time that a task spends sleeping. Hence, the load of a task becomes a combination of its weight and its average CPU utilization, and the load of the core is the sum of the loads of its tasks. Since the CPU utilization of a task can vary, its load is constantly updated.
 
 \subsubsection{Migrating tasks}
 The scheduler periodically checks that the load of all the CPUs is balanced. In case it is not, the scheduler tries to migrate the tasks from one CPU to another: this operation is called \textit{task migration}. The migration of a task could be expensive and, in some cases, it could be more efficient to not move the task at all. The memory access design of the CPU plays an important role and can change radically how expensive it is to migrate tasks. In a \textit{uniform memory access} (UMA) architecture there is one memory, and the cost of accessing it is the same for all the cores. In this case the tasks can be migrated between cores without any constraints, but having a single memory is not efficient since two cores cannot access the memory at the same time. Modern processors solve this problem by giving each core its own memory, but this creates a more complex structure. In \textit{non-uniform memory access} (NUMA) the cost of accessing the memory is no longer the same for all the cores, but depends on where the desired data is located. Specifically, memory can be local or foreign relatively to a core, and the migration cost changes drastically between the two. This means that sometimes it is more efficient to keep a task on the same core, even if the cores are not balanced. 
@@ -354,6 +355,6 @@ The same system could use a mix of the two structures: the cores could be divide
 \paragraph{Domains} %mpi
 The structure of the system is described by two entities: scheduling domains and CPU groups. A scheduling domain is a set of CPUs, and a CPU group is a partition of the CPUs of a domain. A CPU inside a domain cannot belong to two groups of the same domain and every CPU has to be part of a group. The scheduler does not balance the load between single CPUs, instead it tries to balance the loads among the CPU groups of a domain.
 
-Let's take as an example a system with 2 pairs of processors. A pair shares the same memory and its processors can exchange tasks without cost. On the other hand, moving tasks between pairs is more expensive. This could be a real scenario, where a pair represents a single physical processor with inside two hyperthreaded CPUs. Each pair is represented by a domain, which contains two CPU groups, one for each processor. The groups contains only one CPU in this case. Inside this domain balancing can happen very often since it can be done without additional cost, and it is triggered by small differences in load between the groups of the domain.
+Let's take as an example a system with 2 pairs of processors. A pair shares the same memory and its processors can exchange tasks without cost. On the other hand, moving tasks between pairs is more expensive. This could be a real scenario, where a pair represents a single physical processor with inside two hyperthreaded CPUs. Each pair is represented by a domain, which contains two CPU groups, one for each processor. The groups contain only one CPU in this case. Inside this domain balancing can happen very often since it can be done without additional cost, and it is triggered by small differences in load between the groups of the domain.
 
-To allow the tasks to be migrated from one domain to another, there is also an higher level domain that includes all the CPUs. It is partitioned in two CPU groups, one for each pair. The two groups are kept balanced, but the scheduler does not try to balance the load inside a group. This domain tries to balance the load much less often and it is more tolerant to imbalances in the load. There could also be other layers of domains: for example, in a NUMA system there could be another domain representing a NUMA node, with a different migration policy. By using this domain structure, the scheduler can take in consideration the organization of the system when balancing the CPUs, allowing for more efficient choices.
+To allow the tasks to be migrated from one domain to another, there is also a higher level domain that includes all the CPUs. It is partitioned in two CPU groups, one for each pair. The two groups are kept balanced, but the scheduler does not try to balance the load inside a group. This domain tries to balance the load much less often and it is more tolerant to imbalances in the load. There could also be other layers of domains: for example, in a NUMA system there could be another domain representing a NUMA node, with a different migration policy. By using this domain structure, the scheduler can take in consideration the organization of the system when balancing the CPUs, allowing for more efficient choices.

@@ -13,47 +13,50 @@ This concept can be expanded to other types of groups. The tasks can be grouped 
 As an example, imagine a university server that is used by students, but also for large computations. Many students can use the server at the same time, and each can run many programs. With the hierarchical structure, the system can be divided into two groups, one for all the students and one for the computations. The group for the students can be further divided into other groups, one for each student. This way, the computation would always get 50\% of CPU time while the remaining would be equally divided between all students.
 
 \paragraph{CPU Bandwidth}
-The group scheduling feature presented above doesn't guarantee that a group runs for a limited amount of time. It only divides the CPU equally between active groups. If none of the tasks of one group are ready to run, the other groups will try to get as much CPU time as possible. But the ability to control the maximum amount of time that a group can run for can be useful, especially in some enterprise scenarios.  Cloud systems, for example, offer limited CPU capacity. It is in the interests of the company to limit the resources for a group.
+The group scheduling feature presented above does not guarantee that a group runs for a limited amount of time. It only divides the CPU equally among active groups. If none of the tasks of one group are ready to run, the other groups will try to get as much CPU time as possible. But the ability to control the maximum amount of time that a group can run for can be useful, especially in some enterprise scenarios.  Cloud systems, for example, control the amount of offered CPU capacity. It is then in the interests of the company to control the resources for a group.
 
 In this chapter, we will look at how these two features, group scheduling, and CPU bandwidth control, are implemented in CFS. And how a user can control them via \textit{cgroups}.
 
 \section{Group scheduling and CPU bandwidth}
+\label{sec:group_and_cpu}
 
 Linux allows group scheduling with CFS since version 2.6.24. This feature is active only if the kernel is configured with the \verb|CONFIG_FAIR_GROUP_SCHED| flag.
 
 \subsection{Entity Hierarchy}
 
-The concept of schedulable entity is introduced to implement the group scheduling feature. CFS does not schedule the tasks directly. Instead, it uses a generic entity that contains the required information. An entity can represent a task. But it can also represent a group of tasks. By using this entity abstraction, the scheduler does not make any distinction between tasks and groups.
+The concept of schedulable entity is introduced to implement the group scheduling feature. CFS does not schedule the tasks directly. Instead, it uses a generic ``entity'' that contains the required information. An entity can represent a task as well as a group of tasks. By using such an entity abstraction, the scheduler does not distinguish between tasks and groups.
 
-In the simple version of CFS, the runqueue contains each runnable task. The scheduler can then select and run the most deserving one.
-With group scheduling, not all the entities are placed directly on the runqueue. Instead, CFS creates a hierarchy. If a task belongs to a group, it is put under the group in the hierarchy, as a child. It is also possible for a group to be a child of another one, forming this way, sub-groups. Only the top-level entity, which does not have any parent, is inserted into the CPU runqueue.
+In the simple version of CFS, the run-queue contains each runnable task. The scheduler can then select and run the most deserving one.
+With group scheduling, not all the entities are placed directly in the run-queue. Rather, CFS creates a hierarchy. If a task belongs to a group, it is put under the group in the hierarchy, as a child. It is also possible for a group to be a child of another one, forming this way, sub-groups. Only the top-level entity, which does not have any parent, is inserted into the CPU run-queue.
 
-Every entity that corresponds to a group has its run queue that contains all the child entities. Each runqueue behaves precisely like a normal CFS runqueue.  Every entity has its virtual runtime, which is updated every time that it is executed. When the scheduler has to pick the next task to run, it first chooses the most deserving entity from the top-level queue using the standard CFS algorithm. If its chosen entity represents a task, it executes it. If it represents a group, the scheduler repeats the process, but, this time, it selects an entity from the runqueue of the previously selected group. This process continues until a task is selected.
+Every entity that corresponds to a group has its run-queue that contains all the child entities. Each runqueue behaves precisely like a normal CFS run-queue.  Every entity has its virtual runtime, which is updated every time that it is executed. When the scheduler has to pick the next task to run, it first chooses the most deserving entity from the top-level queue using the standard CFS algorithm. If the selected entity represents a task, it executes it. Otherwise, if it represents a group, the scheduler repeats the process at the lower level. This time, however, it selects an entity from the run-queue of the previously selected group. This process continues until a task is selected.
 
-The simplest solution to calculate the virtual run time of a group would be to sum all the virtual run times of its children. But, as we noted earlier, the children and the parent entities could have different weights. And the weight determines how fast or how slow the virtual run time of an entity increases. Summing all the virtual run times together would lead to imprecise accounting and unfair behaviors. Instead, it is calculated by taking the real (not weighted) total run time of the children and weighting it by the weight of the group entity.
+The simplest solution to calculate the virtual run time of a group would be to sum all the virtual run times of its children. But, as observed in Section~\ref{sec:CFS}, the child and parent entities could have different weights. And the weight determines how fast or how slow the virtual run time of an entity increases. Summing all the virtual run times together would lead to imprecise accounting and unfair behaviors. Instead, it is calculated by taking the real (not weighted) total run time of the children and weighting it by the weight of the group entity.
 
 \paragraph{Multiprocessor}
-In multiprocessor systems, the tasks belonging to a group could run at the same time on different CPUs. To allow the migration of tasks, each CPU maintains his own scheduling entity for every group. Tasks belonging to the same group can then be migrated only between the run queues of these scheduling entities. All the different entities of a group are stored inside a dedicated struct, see section \ref{sec:group_sched_impl} for more details.
+In multiprocessor systems, the tasks belonging to a group could run at the same time on different CPUs. To allow the migration of tasks, each CPU maintains his own scheduling entity for every group. Tasks belonging to the same group can then be migrated only between the run-queues of these scheduling entities. All the different entities of a group are stored inside a dedicated struct (see Section~\ref{sec:group_sched_impl} for more details).
 
-\subsection{CPU Limits}%https://landley.net/kdocs/ols/2010/ols2010-pages-245-254.pdf
+\subsection{CPU Limits}
+\label{sec:CPUlimits}
+%https://landley.net/kdocs/ols/2010/ols2010-pages-245-254.pdf
 %and https://www.kernel.org/doc/Documentation/scheduler/sched-bwc.txt
 
 As we mentioned in the introduction, it could be useful to limit the total amount of CPU that a group can use. The regular group scheduling does not impose any hard limit on the CPU bandwidth for a single group. 
 
-Linux has a feature to impose a maximum CPU bandwidth to a group, i.e., the maximum amount of CPU time that a group can get in a certain period. It is an extension of \verb|CONFIG_FAIR_GROUP_SCHED| and the needs to be enabled with the \verb|CONFIG_CFS_BANDWIDTH| flag.
+Linux has a feature to impose a maximum CPU bandwidth to a group, i.e., the maximum amount of CPU time that a group can get in a certain period. It is an extension of \verb|CONFIG_FAIR_GROUP_SCHED| and the needs to be enabled with the \verb|CONFIG_CFS_BANDWIDTH| flag, during the compilation of the kernel.
 
-Two parameters control the CPU limit of a group:  \verb|cfs_period_us| and \verb|cfs_quota_us|, they both specify an amount of time expressed in microseconds. The first defines a period, and the second defines the amount of time that the group can run during that period. The user can set those two parameters via \verb|cgroup|. See section \ref{sec:cgroup}.
+Two parameters control the CPU limit of a group:  \verb|cfs_period_us| and \verb|cfs_quota_us|, they both specify an amount of time expressed in microseconds. The first defines a period, and the second defines the amount of time that the group can run during that period. The user can set those two parameters via \verb|cgroup|. See Section~\ref{sec:cgroup}.
 
-The basic working is simple. At every tick of the system timer the quota of the group is reduced, when it reaches zero, the group is throttled. When this happens, the group is dequeued, and it is prevented from queuing again with other mechanisms. At the end of each period, the quota is repristinated, and the group is queued back.
+The basic working is simple. At every tick of the system timer the quota of the group is reduced, when it reaches zero, the group is throttled. When this happens, the group is dequeued, and it is prevented from queuing again with other mechanisms. At the end of each period, the quota is restored, and the group is enqueued again.
 
 A group can also be throttled when its parent consumes all its quota. Even if the child has time remaining, it will not be allowed to run.
 
 \paragraph{Multiprocessor}
 In case the system uses more processors, it is more complicated. The different processors need to communicate to guarantee that the group does not exceed his quota. For this reason, the quota left for the group is tracked globally. But, to limit access to this global quota, the runtime of a group is not consumed directly. Instead, the group's entity store a portion of the quota. And each CPU maintains its copy of each entity to avoid any locking.
 
-At each scheduler tick, the remaining quota of the current group is updated. If the local quota has expired, the system tries to get more quota from the global tracker. If there is still more quota available, it is transferred to the entity, and the group can be scheduled again. If the group has run out global quota, it is throttled, meaning that it can not run anymore until the next period. The user can configure the amount of time that is taken at each request. It can be changed via the proc filesystem:\verb|/proc/sys/kernel/sched_cfs_bandwidth_slice_us|.
+At each scheduler tick, the remaining quota of the current group is updated. If the local quota has expired, the system tries to get more quota from the global tracker. If there is still more quota available, it is transferred to the entity, and the group can be scheduled again. If the group has run out global quota, it is throttled, meaning that it can not run anymore until the next period. The user can configure the amount of time that is taken at each request by changing the value of \verb|/proc/sys/kernel/sched_cfs_bandwidth_slice_us|.
 
-There is no mechanism to transfer local quota from one CPU to another. It means that a task could be considered throttled by one CPU, and not by another. A smaller timeslice transferred from the global quota allows for a more fine-grained consumption, but will also increase the transfer overhead.
+There is no mechanism to transfer local quota from one CPU to another. This means that a task could be considered throttled by one CPU, and not by another. A smaller timeslice transferred from the global quota allows for a more fine-grained consumption, but will also increase the transfer overhead.
 
 \subsection{Implementation of group scheduling and CPU bandwidth control}
 \label{sec:group_sched_impl}
@@ -77,14 +80,14 @@ struct task_group {
 
 \begin{itemize}
     \item \verb|sched_entity **se| is a pointer to a list of entities, one for each CPU. As mentioned earlier, every group has a scheduling entity for each CPU to allow task migration. This list represents all the entities of a group.
-    \item \verb|cfs_rq **cfs_rq| are the runqueues on which the entities belonging to this group are scheduled. As for the \verb|sched_entity|, each CPU maintains a runqueue for each group.
+    \item \verb|cfs_rq **cfs_rq| are the run-queues on which the entities belonging to this group are scheduled. As for the \verb|sched_entity|, each CPU maintains a runqueue for each group.
     \item \verb|shares| represents the weight of a group. Its default value is 1024, but it can be set by the user using cgroups, see section \ref{sec:cgroup}.
     \item \verb|struct cfs_bandwidth| stores the information used for CPU bandwidth control. The most important fields are: \verb|quota| and \verb|period|. It also stores some statistics such as: \verb|throttled_time| and \verb|nr_throttled|. The first is the total time the group has been throttled, and the second is the number of periods in which it has been throttled.
 \end{itemize}
 
 \subsubsection{Scheduling}
 
-As we mentioned, both tasks and groups have a corresponding scheduling entity. Many fields are important for the scheduler, here are only the ones related to group scheduling, for more information on the other fields see chapter \ref{chap:implementation}
+As mentioned earlier, both tasks and groups have a corresponding scheduling entity. Many fields are important for the scheduler. Below, only the ones related to group scheduling are listed. For more information on the other fields see Chapter~\ref{chap:implementation}
 
 \begin{code}
 struct sched_entity {
@@ -115,15 +118,15 @@ Every time that the virtual run time of a task is updated, the virtual run time 
 When the scheduler has to pick the next task to run, it starts by selecting the most deserving entity from the top-level \verb|cfs_rq|. If this entity has the \verb|my_q| set to null, it means that it represents a task, and executes it normally. Otherwise, if \verb|my_q| is set, the scheduler repeats the process on the entities contained in this runqueue.
 
 \subsubsection{CPU Bandwidth}
-Each group has a \verb|cfs_bandwidth| struct associated with it. This struct holds the global quota available to a group, and it is unique between all the CPUs. As we mentioned in the previous section, this quota is not consumed directly at each scheduler tick. Instead is reduced in batches when needed.
+Each group has a \verb|cfs_bandwidth| struct associated with it. This struct holds the global quota available to a group, and it is unique between all the CPUs. As mentioned in the previous section, this quota is not consumed directly at each scheduler tick. Instead, it is reduced in batches when needed.
 
-A group entity has its own \verb|cfs_rq| on which its tasks are scheduled, but different CPUs have different runqueues associated with the same group. Each runqueue has its own available quota, which is decreased at each scheduler tick. The \verb|cfs_rq| struct has a few fields related to bandwidth control:
+A group entity has its own \verb|cfs_rq| on which its tasks are scheduled, but different CPUs have different run-queues associated with the same group. Each run-queue has its own available quota, which is decreased at each scheduler tick. The \verb|cfs_rq| struct has a few fields related to bandwidth control:
 \begin{itemize}
-    \item \verb|int runtime_enabled|: simply indicates if the current runqueue has bandwidth restrictions.
+    \item \verb|int runtime_enabled|: simply indicates if the current run-queue has bandwidth restrictions.
     \item \verb|expires_seq|: period counter.
     \item \verb|runtime_expires|: indicates the end of the current period.
     \item \verb|runtime_remaining|: indicates the remaining quota already assigned to this CPU in the current period.
-    \item \verb|throttled|: is set to 1 if the runqueue is throttled.
+    \item \verb|throttled|: is set to 1 if the run-queue is throttled.
 \end{itemize}
 
 The local quota accounting is done by the \verb|__account_cfs_rq_runtime()| function, which is called by \verb|update_curr()|:
@@ -143,15 +146,14 @@ static void __account_cfs_rq_runtime(struct cfs_rq *cfs_rq, u64 delta_exec)
 }
 \end{code}
 
-The first two lines reduce the \verb|runtime_remaining| and check if the period has expired if it has, \verb|remaining_time| is set to 0.
+The first two lines reduce the \verb|runtime_remaining| and check if the period has expired. If so, \verb|remaining_time| is set to 0.
 
 In case the group has exceeded his local bandwidth limit or the period has expired, it tries to get more time from the global pool. This is done by the \verb|assign_cfs_rq_runtime()| function. If it can get more time, the local quota is updated. Otherwise, a reschedule is triggered, and later the group throttled.
 
-The global quota is managed by 
-\begin{verbatim}
-task_group->cfs_bandwidth.
-\end{verbatim}
-Note that the access to this struct is protected by a lock since more CPUs could try to access it at the same time.
+The global quota is managed by the field
+\verb|task_group->cfs_bandwidth| of the struct \verb|task_group|.
+Note that the access to this struct is protected by a lock since more
+CPUs could try to access it at the same time.
 
 These are the main fields in \verb|cfs_bandwidth|:
 \begin{code}
@@ -162,7 +164,7 @@ struct cfs_bandwidth {
 	u64			runtime_expires;
 	int			expires_seq;
     
-    short			idle;
+        short			idle;
 	short			period_active;
 	struct hrtimer		period_timer;
 	
@@ -176,22 +178,23 @@ struct cfs_bandwidth {
 \end{code}
 The default amount of time transferred from the global to the local pool is five milliseconds, but it can be changed.
 
-We mentioned in section 1.2.2 that the CPU bandwidth for a group is controlled by two parameters, a quota and a period. These values are present in the \verb|cfs_bandwidth| struct. At the start of each period \verb|runtime| is set to \verb|quota| and \verb|runtime_expires| is set to the current time plus the period.
+We mentioned in Section~\ref{sec:CPUlimits} that the CPU bandwidth for a group is controlled by two parameters, a quota and a period. These values are stored in the \verb|cfs_bandwidth| struct. At the start of each period \verb|runtime| is set to \verb|quota| and \verb|runtime_expires| is set to the current time plus the period.
 
-When a local runqueue requests for more time, the \verb|assign_cfs_rq_runtime()| function checks if the global pool still has some time left:
+When a local run-queue requests for more time, the \verb|assign_cfs_rq_runtime()| function checks if the global pool still has some time left:
 \begin{itemize}
-    \item if there is time left and it is more than the transfer slice, then the time is decreased from the global pool and added to the local quota.
-    \item if there is still time left, but it less than the slice, only the remaining time is transferred
+    \item if there is time left and it is more than the transfer slice, then the time is decreased from the global pool and added to the local quota;
+    \item if there is still time left, but it less than the slice, only the remaining time is transferred;
     \item if there is no time left, nothing is transferred and, if the group is currently running, a reschedule is triggered.
 \end{itemize}
-If the global pool is decremented, \verb|cfs_bandwidth->idle| is set to 0, this signal that the has been activity during the period.
+If the global pool is decremented, \verb|cfs_bandwidth->idle| is set to 0, this signals that there has been activity during the period.
 
 Note that a group could have CPU bandwidth restriction activated, but have unlimited time if the quota is greater or equal to the period. In this case, the timeslice is always transferred to the local queue.
 
-\paragraph{Throttling}%https://lore.kernel.org/patchwork/patch/259880/
-As mentioned before, when a group exceeds its quota, a rescheduling action is triggered, but it is not throttled directly. When an entity is removed from the runqueue, the \verb|put_prev_entity()| function is called. This function updates some statistics and if \verb|cfs_rq->runtime_remaining| is less than or equal to zero, the task is throttled by the \verb|throttle_cfs_rq()| function, which does the following actions:
+\paragraph{Throttling}
+%https://lore.kernel.org/patchwork/patch/259880/
+As mentioned before, when a group exceeds its quota, a rescheduling action is triggered, but it is not throttled directly. When an entity is removed from the run-queue, the \verb|put_prev_entity()| function is called. This function updates some statistics and if \verb|cfs_rq->runtime_remaining| is less than or equal to zero, the task is throttled by the \verb|throttle_cfs_rq()| function, which does the following actions:
 \begin{itemize}
-    \item removes the entity corresponding to the throttled runqueue from its parent \verb|cfs_rq|.
+    \item removes the entity corresponding to the throttled run-queue from its parent \verb|cfs_rq|.
     \item If the parent \verb|cfs_rq| only contained that entity, it is also dequeued. This process continues until a runqueue with more entities is reached.
     \item \verb|cfs_rq->throttled| is set to 1.
     \item the \verb|cfs_rq| is added to the list of throttled groups contained in the \verb|cfs_bandwidth| struct of the task group.
@@ -215,20 +218,24 @@ A timer is set to trigger at the end of every period, the default value for a pe
 
 Control groups (\verb|cgroups|) is a kernel mechanism that allows the creation and the control of groups of tasks. By itself, it offers only the possibility to group threads and to associate a set of parameters to them. But it doesn't have any effects on the scheduling process or any other aspect of the operating system. A single \verb|cgroup| is a set of tasks that can have some parameters attached to it. 
 
-\verb|Cgroups| were introduced in version 2.6.24 of the kernel, this first version is denominated \verb|cgroups-v1|. Later, in Linux 4.5, a new version was introduced denominated \verb|cgroups-v2|. A system can use both versions at the same time, but with some limitations. Here, we will mainly examine the first version, but the basic principles apply to both versions.
+\verb|cgroups| were introduced in version 2.6.24 of the kernel, this first version is denominated \verb|cgroups-v1|. Later, in Linux 4.5, a new version was introduced denominated \verb|cgroups-v2|. A system can use both versions at the same time, but with some limitations. Here, we will mainly examine the first version, but the basic principles apply to both versions.
 
-To track or to control the resources used by a cgroup, a subsystem has to be attached to it. A subsystem, sometimes called \verb|resource controller|, is a module that uses the functionalities provided by cgroups to control how a group of tasks uses a particular resource. The \verb|cpu| subsystem, for example, enables the control of the CPU usage. And it used the mechanisms described in the previous section: group scheduling and CPU bandwidth. There are also other subsystems, for example, the \verb|memory| subsystem allows the control of memory resources and the \verb|devices| subsystem that controls the access to devices. In total there are 12 subsystems for \verb|cgroups-v1|. In this section, we will focus on the \verb|cpuacct| and \verb|cpu|, the first allows only CPU resource accounting. The second allows controlling the CPU usage of a \verb|cgroup|.
+To track or to control the resources used by a cgroup, a subsystem has to be attached to it. A subsystem, sometimes called \verb|resource controller|, is a module that uses the functionalities provided by cgroups to control how a group of tasks uses a particular resource. The \verb|cpu| subsystem, for example, enables the control of the CPU usage. It uses the mechanisms described in Section \ref{sec:group_and_cpu}. There are also other subsystems, for example, the \verb|memory| subsystem allows the control of memory resources and the \verb|devices| subsystem that controls the access to devices. In total there are 12 subsystems for \verb|cgroups-v1|. In this section, we will focus on the \verb|cpuacct| and \verb|cpu|, the first allows only CPU resource accounting. The second allows controlling the CPU usage.
 
-\verb|Cgroups| are organized in a tree, each node of the tree is a \verb|cgroup| that can have some properties. The children of a group inherit the properties of the parent. This hierarchical structure is also useful for resource accounting. In group scheduling, for example, the CPU usage of a group propagates to the parent group. Every task is contained in exactly one of the \verb|cgroups| in the hierarchy. But not all subsystem makes use of this hierarchical structure, or maybe different subsystems may need to organize the hierarchy in different ways. For this reason, more than one hierarchy is possible. The various hierarchies are independent of each other. They can arrange tasks in entirely different ways.
+<<<<<<< HEAD
+\verb|cgroups| are organized in a tree, each node of the tree is a \verb|cgroup| that can have some properties. The children of a group inherit the properties of the parent. This hierarchical structure is also useful for resource accounting. In group scheduling, for example, the CPU usage of a group propagates to the parent group. Every task is contained in exactly one of the \verb|cgroups| in the hierarchy. But not all subsystem makes use of this hierarchical structure, or maybe different subsystems may need to organize the hierarchy in different ways. For this reason, more than one hierarchy is possible. The various hierarchies are independent of each other. They can arrange tasks in entirely different ways.
+=======
+\verb|Cgroups| are organized in a tree, each node of the tree is a \verb|cgroup| with some properties. The children of a group inherit the properties of the parent. This hierarchical structure is also useful for resource accounting. In group scheduling, for example, the CPU usage of a group propagates to the parent group. Every task is contained in exactly one of the \verb|cgroups| of the hierarchy. But not all subsystem makes use of this hierarchical structure, or maybe different subsystems may need to organize the hierarchy in different ways. For this reason, more than one hierarchy is possible. The various hierarchies are independent of each other. They can arrange tasks in entirely different ways.
+>>>>>>> e288e39b7aab9fe819494e41528b6e90b42a64a4
 
-The subsystems are not attached directly to the cgroups. Instead, they are attached to a hierarchy, which can have more than one subsystem or not at all. But a subsystem can not be connected to two hierarchies at the same time. Given these restrictions, the default approach in many distributions is to have a different hierarchy for each subsystem. Only the \verb|cpu| and the \verb|cpuacct| subsystems usually use the same hierarchy. The presence of multiples hierarchies allows for more flexibility in controlling resources, but complicates their usage, as more hierarchies need to be managed at the same time. In \verb|cgroup-v2| this system is substituted by a single hierarchy for more simplicity.
+The subsystems are not attached directly to the cgroups. Instead, they are attached to a hierarchy, which can have more than one subsystem or not at all. But a subsystem can not be connected to two hierarchies at the same time. Given these restrictions, the default approach in many distributions is to have a different hierarchy for each subsystem. Only the \verb|cpu| and the \verb|cpuacct| subsystems are usually attached to the same hierarchy. The presence of multiples hierarchies allows for more flexibility in controlling resources, but complicates their usage, as more hierarchies need to be managed at the same time. In \verb|cgroup-v2| this system is substituted by a single hierarchy for more simplicity.
 
 \subsection{How to control \textit{cgroups}}
-Control groups don't have any dedicated system calls. Instead, the user can interact with them via a dedicated filesystem. It allows the kernel and the user to communicate with each other. Each hierarchy is mounted separately with the command: \verb|mount -t cgroup -o cpuacct,cpu none /sys/fs/cgroup/rg1|. \newline This mounts a cgroup hierarchy with the cpuacct and the cpu subsystems attached. The set of subsystems attached can not be changed unless the hierarchy consists of a single cgroup.
+Control groups don't have any system call. Instead, the user can interact with them via a dedicated filesystem. It allows the kernel and the user to communicate with each other. Each hierarchy is mounted separately with the command: \verb|mount -t cgroup -o cpuacct,cpu none /sys/fs/cgroup/rg1|. \newline This example mounts a \verb|cgroup| hierarchy with the \verb|cpuacct| and the \verb|cpu| subsystems attached. The set of subsystems attached can not be changed unless the hierarchy consists of a single \verb|cgroup|.
 
-When the hierarchy is first created only one \verb|cgroup| is present and all the tasks on the system are contained in it. The user can create a new \verb|cgroup| by creating a new directory with \verb|mkdir|. It creates a new \verb|cgroup| with the name of the directory. Similarly a \verb|cgroup| can be removed with \verb|rmdir|, but only if it has no tasks in it and no child groups. 
+When the hierarchy is first created only one \verb|cgroup| is present and all the tasks on the system are contained in it. The user can create a new \verb|cgroup| by creating a new directory in the filesystem with \verb|mkdir|. It creates a new \verb|cgroup| with the name of the directory. Similarly a \verb|cgroup| can be removed with \verb|rmdir|, but only if it has no tasks in it and no child groups. 
 
-When a cgroup is created, some files are created with it. These files allow the user to control the cgroup. One of these files is \verb|tasks|, and it is used to control which threads are a member of the \verb|cgroup|. When the user wants to move one thread from a group to another, [s]he writes its PID in the \verb|tasks| file of the destination group. If the user has the permission, the task will be deleted from the previous group and added to the new one. All the threads of a process can also be moved all at once by writing one of the PIDs of its threads in the \verb|cgroup.proc| file. 
+When a \verb|cgroup| is created, some files are created with it. These files allow the user to control the cgroup. One of these files is \verb|tasks|, and it is used to control which threads are a member of the \verb|cgroup|. When the user wants to move one thread from a group to another, [s]he writes its PID in the \verb|tasks| file of the destination group. If the user has the permission, the task will be deleted from the previous group and added to the new one. All the threads of a process can also be moved all at once by writing one of the PIDs of its threads in another file called: \verb|cgroup.proc|. 
 
 \verb|tasks| and \verb|cgroup.proc| are two files present in every \verb|cgroup| directory, but there are also other files that depend on the subsystems attached to the hierarchy. They can be used by the user to control the behavior of the subsystems, or the subsystems can use them for resource accounting.  The next section analyzes in more detail the \verb|cpu| and \verb|cpuacct| subsystems.
 
@@ -250,7 +257,7 @@ These are all the features provided by \verb|cpuacct|. It does not allow any con
 
 \subsubsection{The \textit{cpu} subsystem}
 
-The \verb|cpu| subsystem controls the CPU resources used by \verb|cgroups|. In section \ref{sec:group_sched}, we saw how groups of tasks are scheduled, but we haven't explained how the system can create the groups. It is done via \verb|cgroups|: when the \verb|cpu| subsystem is attached to a hierarchy, the scheduler automatically creates a parallel hierarchy of \verb|sched_entities| used by the scheduler. Every time that the \verb|cgroups|'s structure is modified, the entities are changed accordingly. 
+The \verb|cpu| subsystem controls the CPU resources used by \verb|cgroups|. In section \ref{sec:group_and_cpu}, we saw how groups of tasks are scheduled, but we haven't explained how the system can create the groups. It is done via \verb|cgroups|: when the \verb|cpu| subsystem is attached to a hierarchy, the scheduler automatically creates a parallel hierarchy of \verb|sched_entities| used by the scheduler. Every time that the \verb|cgroups|'s structure is modified, the entities are changed accordingly. 
 
 As we saw, the \verb|sched_entities| contain all the information needed to schedule the groups and the tasks. One of the most important values is the \verb|weight| of an entity, which is used to calculate the virtual runtime. For tasks, the weight can be changed by increasing or decreasing their \verb|nice| value. But for groups, their weight can be controlled via the \verb|cgroups|'s filesystem.
 
@@ -267,11 +274,12 @@ The \verb|cpu| subsystem also offers some statistics related to CPU bandwidth in
     \item \verb|throttled_time|, which is the total amount of time that the group has spent in a throttled state.
 \end{itemize}
 
+
 \subsection{Implementation}
 
 To better understand how \verb|cgrups| work, it is worth analyzing how they are implemented.
 
-Every \verb|cgroup| has a dedicated struct which contains the information needed to operate, like the hierarchy it belongs to. But, \verb|cgroups| and tasks are not linked directly. There could be many hierarchies, and every task must be present in a \verb|cgroup| of each one. In many cases, there are only 12 hierarchies, one for each subsystem, but there could also be many more. 
+Every \verb|cgroup| has a dedicated struct which contains the information needed to operate. It contains information on the hierarchy it belongs to. But, the tasks members of the \verb|cgroup| are not linked directly. It would be too costly since there could be many hierarchies, and every task must be present in each one. In many cases, there are only 12 hierarchies, one for each subsystem, but there could also be many more. 
 
 When a process is created, it is placed in the same \verb|cgroup| as his parent. As a consequence, many \verb|cgroups| across hierarchies have the same members. This characteristic can be used to simplify the linkage between tasks and \verb|cgroups|.
 
@@ -287,7 +295,7 @@ With this structure, it is easy to find a \verb|cgroup| for a given task and is 
 
 \paragraph{The \textit{cgroup\_subsystem\_state struct}}
 Every \verb|css_set struct| contains a list of \verb|cgroup_subsystem_state struct| (abbreviated to \verb|css|), it includes the information for each couple subsystem-cgroup.
-The position of a \verb|css| in the list is equal to the id of the subsystem it corresponds to. When a task needs to access one of its cgroup in a particular hierarchy, it can simply follow the pointer to the cgroup inside the corresponding \verb|cgroup_subsys_state struct|. Each \verb|css| also has a pointer to the parent \verb|css| for quickly retrieving its information.
+The position of a \verb|css| in the list is equal to the \verb|id| of the subsystem it corresponds to. When a task needs to access one of its cgroup in a particular hierarchy, it can simply follow the pointer to the cgroup inside the corresponding \verb|cgroup_subsys_state struct|. Each \verb|css| also has a pointer to the parent \verb|css| for quickly retrieving its information.
 
 \subsubsection{The \textit{cgroup\_subsys struct}}
 A \verb|cgroup_subsys struct| defines a subsystem. It contains some necessary information like the subsystem id and a unique name. And it also contains a set of methods that perform all the actions required by the subsystem. Let's analyze some of the methods for the \verb|cpu| subsystem. It is defined as follow in \verb|kernel/sched/core.c|:
@@ -304,6 +312,7 @@ struct cgroup_subsys cpu_cgrp_subsys = {
 	.legacy_cftypes	= cpu_legacy_files,
 };
 \end{code}
+
 \paragraph{\textit{css} allocation}
 The \verb|css_alloc| method is called when a new subsystem state struct needs to be allocated, for example, when a new cgroup is created. In the case of the \verb|cpu| subsystem, it also allocates the \verb|task_group struct| and the \verb|sched_entity| for each CPU in the system. This way the \verb|cgroups| and \verb|sched_entity| hierarchies are always equivalent. The \verb|css_free| method does the opposite. It eliminates the subsystem state and all the corresponding structs. These two methods are the only strictly required ones. The other ones are optional.
 
@@ -314,16 +323,17 @@ After the tasks have been moved to the new \verb|cgroup|, the \verb|attach| meth
 
 \verb|legacy_cftypes| defines the methods for interacting with the subsystem's files.
 
-\subsection{Autogroup}%http://man7.org/linux/man-pages/man7/sched.7.html
+\subsection{Autogroup}
+%http://man7.org/linux/man-pages/man7/sched.7.html
 %https://lwn.net/Articles/418884/
 %https://lwn.net/Articles/415740/
 
-\verb|Cgroups| require a manual setup from the user and they are not convenient for regular desktop users. Autogroup is a feature that allows groups to be created automatically based on the session ID. It can improve the interactive performance of a desktop system, especially during CPU-intensive workloads.
+\verb|cgroups| require a manual setup from the user and they are not convenient for regular desktop users. Autogroup is a feature that allows groups to be created automatically based on the session ID. It can improve the interactive performance of a desktop system, especially during CPU-intensive workloads.
 
 \subsubsection{Session}
 Sessions are used to identify distinct process groups. Each session has an ID. This ID corresponds to the PID of the process that initiates the session. When the \verb|setsid()| command is called, a new session is created. It usually corresponds to the creation of a new terminal window. The session is also inherited by the child process when the parent forks.
 
-When the \verb|autogroup| feature is enabled in the kernel with \newline \verb|CONFIG_SCHED_AUTOGROUP|, all the tasks with the same session ID are placed inside the same task group. We saw in section 1.2 how the scheduler tries to give each group an equal amount of CPU time.
+When the \verb|autogroup| feature is enabled in the kernel with \newline \verb|CONFIG_SCHED_AUTOGROUP| flag at compile time, all the tasks with the same session ID are placed inside the same task group. We saw in Section~\ref{sec:group_and_cpu} how the scheduler tries to give each group an equal amount of CPU time.
 
 It is particularly useful during CPU-intensive workloads that use many parallel processes. Suppose that there are 10 CPU-intensive parallel processes and one process, like a video player, that also needs a lot of CPU. Without \verb|autogrouping| the CPU would be equally distributed between all the processes. But the video player would only get a small portion of CPU time, which could degrade the viewing experience. With \verb|autogrouping| enabled, there would be one task group containing the ten processes and one containing only the video player. This way the player can get 50\% of CPU time.
 

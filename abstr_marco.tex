@@ -1,6 +1,6 @@
 \chapter{Abstract}
 This thesis is about process scheduling and its implementation in the Linux kernel. Moreover, it covers event tracing, since it is a crucial component needed for kernel debugging. 
-The focus is on illustrating the scheduler implementation in Linux kernel version 4.20.13 (released on 27--02--2019), as well as documenting scheduling-related events. In fact, both the kernel and the event tracing infrastructure are poorly documented.
+Many parts of the kernel and the event tracing infrastructure are poorly documented. The focus is therefore on illustrating the scheduler implementation in Linux kernel version 4.20.13 (released on 27--02--2019), as well as documenting scheduling-related events.
 Since the kernel and the tracing support are tightly related to each other, it is challenging to document the events without understanding how the scheduler works. Hence, most of the events are mentioned and explained on the fly, while discussing other concepts.
 
 Examples of code are always provided, each piece of theory will have its implementation counterpart shown and explained.
@@ -11,10 +11,10 @@ but have never looked too much into it, its goal is to give interesting insights
 The only prerequisite is to have some experience with C and know the very basics of GNU/Linux and operating systems.
 
 %Explain how the thesis is structured
-In Chapter \ref{ch:introduction}, I give a brief overview of the kernel and then explain some basic task management concepts. 
+In Chapter \ref{ch:introduction}, we give a brief overview of the kernel and then explain some basic task management concepts. 
 In Chapter \ref{ch:sched}, CFS (Completely Fair Scheduler) is analyzed and compared to the previous schedulers implemented in the kernel. 
 Chapter \ref{chap:implementation} covers the structures used by the scheduler and the implementation of the main scheduler routines.
 In Chapter \ref{chap:ftrace}, function/event tracing and their role in kernel debugging are covered by introducing \verb|ftrace|. Here, a small module is written to show how to create our own events to trace from user space.
 Finally, Chapter \ref{ch:events_documentation} is a brief documentation of the scheduler events.
 
-All references to the source code are from kernel version 4.20.13, the latest stable version at the time of writing. When discussing architecture dependent code it will be assumed that the architecture is x86. In the code, every comment spanning over multiple rows (\verb|/*...*/|) is written by the kernel developers, my comments are always inline (\verb|//|). The following is a useful tool to quickly look up mentioned kernel functions: \href{https://elixir.bootlin.com/linux/v4.20.13/source}{\texttt{elixir.bootlin.com/linux/v4.20.13/source}}. Another alternative is to download the source code from \href{https://www.kernel.org/}{\texttt{kernel.org}}, which is needed for compiling and loading. 
+All references to the source code are from kernel version 4.20.13, the latest stable version at the time of writing. When discussing architecture-dependent code it will be assumed that the architecture is x86. In the code, every comment spanning over multiple rows (\verb|/*...*/|) is written by the kernel developers, my comments are always inline (\verb|//|). The following is a useful tool to quickly look up mentioned kernel functions: \href{https://elixir.bootlin.com/linux/v4.20.13/source}{\texttt{elixir.bootlin.com/linux/v4.20.13/source}}. Another alternative is to download the source code from \href{https://www.kernel.org/}{\texttt{kernel.org}}, which is needed for compiling and loading. 

@@ -4,20 +4,20 @@
 \section{Structs and their role}
 
 \paragraph{task\_struct}
-As mentioned in chapter \ref{ch:introduction}, each task in the system is represented \newline by a \verb|task_struct|, which contains all the information about it. Here we list some of the fields used by the scheduler, and then cover them in detail.
+As mentioned in Chapter \ref{ch:introduction}, each task in the system is represented \newline by a \verb|task_struct|, which contains all the information about it. Here we list some of the fields used by the scheduler, and then cover them in detail.
 \begin{itemize}
     \item \verb|thread_info|. This struct is architecture dependant and can contain various fields. The most important for the scheduler is the \verb|flags| field. These flags are used to keep track of requests or signals from and for the task. \verb|TIF_SIGPENDING| means that the process has pending signals, \verb|TIF_MEMDIE| means that the process is being killed to reclaim memory. In particular, there are two flags that are crucial for the scheduler: \verb|TIF_NEED_RESCHED| and \verb|TIF_POLLING_NRFLAG|. The first indicates that scheduling must be performed, and the second that the idle process is polling the \verb|TIF_NEED_RESCHED| flag. Note: \verb|TIF| simply means ``Thread InFormation''.
     \item \verb|state|. A long that represents the state of the task: -1 unrunnable, 0 runnable, $>0$ stopped. 
     \item \verb|on_rq|. Indicates if the process is on the runqueue.
     \item \verb|static_prio| and \verb|normal_prio|. The first is the priority used for real-time scheduling policies. If the task is scheduled under one of the normal scheduling policies \verb|static_prio| is set to zero and \verb|normal_prio| is used. This number is an internal representation used in the kernel, different from the priority value shown in user space.
     \item \verb|sched_entity|. This struct contains all the other information needed by the scheduler.
-    \item Pointer to \verb|sched_class|. The scheduling class discussed in chapter \ref{ch:sched}. Contains a circular list of all scheduling classes.
+    \item Pointer to \verb|sched_class|. The scheduling class discussed in Chapter \ref{ch:sched}. Contains a circular list of all scheduling classes.
     \item Pointer to \verb|mm_struct|. This struct represents the slice of virtual memory used by the process. Here, ``\verb|mm|'' stands for \textit{memory management}.
 \end{itemize}
 
 \paragraph{thread\_info}
 \label{sec:thread_info}
-This structure is very small and contains only basic information useful for scheduling, and each process has its own \verb|thread_info|. In figure \ref{img:stack} from chapter \ref{ch:introduction} it is shown that this struct is located at the bottom of kernel stacks. The small size of this struct is due to the fact that it has to fit in the small kernel stacks while not occupying too much space. Today, the implementation of \verb|thread_info| has changed: it is now embedded directly in \verb|task_struct|. 
+This structure is very small and contains only basic information useful for scheduling, and each process has its own \verb|thread_info|. In Figure \ref{img:stack} from Chapter \ref{ch:introduction} it is shown that this struct is located at the bottom of kernel stacks. The small size of this struct is due to the fact that it has to fit in the small kernel stacks while not occupying too much space. Today, the implementation of \verb|thread_info| has changed: it is now embedded directly in \verb|task_struct|. 
 
 \begin{code}
 struct task_struct {
@@ -30,7 +30,7 @@ struct task_struct {
 #endif
 // ...
 \end{code}
-With the previous implementation, \verb|thread_info| and \verb|task_struct| referenced each other through pointers. As shown in this code, if \verb|CONFIG_THREAD_INFO_IN_TASK| is defined, the field is not a pointer. With this new implementation, \verb|thread_info| is not located in the kernel stack. In order to access it, a pointer to the current task's \verb|thread_info| is saved, and its \verb|task_struct| can be accessed with the ``\verb|container_of()| trick'' discussed in chapter \ref{ch:introduction}. 
+With the previous implementation, \verb|thread_info| and \verb|task_struct| referenced each other through pointers. As shown in this code, if \verb|CONFIG_THREAD_INFO_IN_TASK| is defined, the field is not a pointer. With this new implementation, \verb|thread_info| is not located in the kernel stack. In order to access it, a pointer to the current task's \verb|thread_info| is saved, and its \verb|task_struct| can be accessed with the ``\verb|container_of()| trick'' discussed in Chapter \ref{ch:introduction}. 
 
 The implementation of this struct is very architecture dependent. This one is specific to x86:
 \begin{code}
@@ -48,8 +48,8 @@ A \verb|sched_entity| may be organized in a hierarchy of entities, this is done 
 
 The most important fields that compose \verb|sched_entity| are:
 \begin{itemize}
-    \item \verb|load_weight|. It contains the weight of the entity. The role of the weight is discussed in chapter \ref{ch:sched}.
-    \item \verb|struct rb_node run_node|. Represents a node inside a red-black tree. The next section shows that the runqueue is organized as a red-black tree. This field is embedded in this struct because the implementation is similar to lists.
+    \item \verb|load_weight|. It contains the weight of the entity. The role of weight is discussed in Chapter \ref{ch:sched}.
+    \item \verb|struct rb_node run_node|. Represents a node inside a red-black tree. This field is embedded in this struct because the implementation of red-black trees is similar to lists.
     \item \verb|on_rq|. Indicates if the entity is on the runqueue.
     \item \verb|exec_start|. The time at which the task started its execution on the CPU. %resetted each time (calc_delta_fair)
     \item \verb|sum_exec_runtime|. The total time that the task has actually spent running on the CPU before being weighted.
@@ -58,7 +58,7 @@ The most important fields that compose \verb|sched_entity| are:
     \item \verb|struct cfs_rq *cfs_rq|. The runqueue on which this entity is queued.
     \item \verb|struct cfs_rq *my_q|. If this is a group, this is the sub-runqueue of this group. The children of this entity are queued here.
 \end{itemize}
-These fields are specific to CFS, where the runqueue is a red-black tree (\verb|rb_node| and \verb|cfs_rq|), and the timeslice is based on virtual runtime (\verb|exec_start| and \verb|sum_exec_runtime| are used to calculate vruntime). The other scheduling class have their own entity, such as \verb|sched_rt_entity| and \verb|sched_dl_entity|, defining its specific fields. \verb|sched_entity| is not called \verb|sched_fair_entity| supposedly because the fair class is the default. 
+These fields are specific to CFS, where the runqueue is a red-black tree (\verb|rb_node| and \verb|cfs_rq|), and the timeslice is based on virtual runtime (\verb|exec_start| and \verb|sum_exec_runtime| are used to calculate vruntime). The other scheduling classes have their own entity, such as \verb|sched_rt_entity| and \verb|sched_dl_entity|, defining its specific fields. \verb|sched_entity| is not called \verb|sched_fair_entity| supposedly because the fair class is the default. 
 
 \paragraph{sched\_class}
 \label{sec:sched_class}
@@ -140,17 +140,17 @@ This structure is a good reference to understand the code because it essentially
 
 % https://www.tldp.org/LDP/tlk/kernel/processes.html
 \paragraph{mm\_struct} 
-This data structure abstracts the virtual memory of a process. It contains information about the executable image of the process, a pointer to the process's page tables, and a mapping to the virtual memory areas. Figure \ref{img:mm} shows the fundamental fields of the struct.
+This data structure abstracts the virtual memory of a process. It contains information about the executable image of the process, a pointer to the process' page tables, and a mapping to the virtual memory areas. Figure \ref{img:mm} shows the fundamental fields of the struct.
 
 \begin{figure}[ht]
 \includegraphics[width=\textwidth]{images/mm.jpg}
-\caption{The structures used for virtual memory \url{https://www.tldp.org/LDP/tlk/kernel/processes.html}}
+\caption{The structures used for virtual memory}
 \label{img:mm}
 \end{figure}
 \verb|mmap| contains a list of virtual memory areas, which can contain the executable code, data, or code from shared libraries.
 This list is actually organized in a binary tree, ordered by memory address, for faster access. These areas are allocated by the process as it runs, for example when it loads code of a shared library. Because it is virtual memory, each process has the illusion that it has the whole memory for itself, and that each time that it allocates memory it gets physically allocated. Such an approach would waste memory: what if the shared library is already loaded in RAM and used by other processes?
 
-For this reason, Linux uses \textit{on-demand paging}. When a process allocates virtual memory, Linux does not actually reserve physical memory for the process. Instead, it describes the virtual memory by creating a new \verb|vm_area_struct| data structure. This is linked into the process's list of virtual memory. When the process attempts to write to a virtual address within that new virtual memory region then the system will page fault. Linux looks to see if the virtual address referenced is in the current process's virtual address space. If it is, Linux creates the appropriate \textit{page table entries} (PTEs) and allocates a physical page of memory for this process. The code or data may need to be brought into that physical page from the filesystem or from the swap disk. The process can then be restarted at the instruction that caused the page fault and, this time as the memory physically exists, it may continue.\cite{tlk}
+For this reason, Linux uses \textit{on-demand paging}. When a process allocates virtual memory, Linux does not actually reserve physical memory for the process. Instead, it describes the virtual memory by creating a new \verb|vm_area_struct| data structure. This is linked into the process' list of virtual memory. When the process attempts to write to a virtual address within that new virtual memory region then the system will page fault. Linux looks to see if the virtual address referenced is in the current process' virtual address space. If it is, Linux creates the appropriate \textit{page table entries} (PTEs) and allocates a physical page of memory for this process. The code or data may need to be brought into that physical page from the filesystem or from the swap disk. The process can then be restarted at the instruction that caused the page fault and, this time as the memory physically exists, it may continue.\cite{tlk}
 
 \verb|mm_struct| has also a role in scheduling, because the \verb|mm|s of the two processes are switched upon context switch. The field \verb|mm| can also be set to \verb|NULL|: in this case the task is a kernel thread, free to use all the kernel space. This operation can be seen in the \verb|context_switch()| routine in Section \ref{sec:context_switch}.
 
@@ -195,13 +195,13 @@ As stated before, the task to run next is the one with the smallest vruntime. In
 \label{sec:timekeeping}
 The kernel must keep track of time. The scheduler, for example, needs to know for how long a task has been running in order to know when to preempt it. There are many other functions that are time-driven, so it's important to understand how the system keeps track of the time.
 
-To do this, the kernel requires an hardware timer. This timer can be implemented in different ways and there can be more timers in a system, but the general idea is the same: the timer sends an interrupt at a fixed frequency known by the kernel. This way, it's possible to get the time between two timer interrupts and perform periodic actions such as updating the system uptime. The period between two interrupts is a unit of measure called \textit{tick}, while the frequency is called \textit{tick rate}; this value is internally defined as the constant \texttt{HZ}. If the value of \texttt{HZ} is 100, there are 100 ticks per second, or one tick each 10 milliseconds.
+To do this, the kernel requires a hardware timer. This timer can be implemented in different ways and there can be more timers in a system, but the general idea is the same: the timer sends an interrupt at a fixed frequency known by the kernel. This way, it's possible to get the time between two timer interrupts and perform periodic actions such as updating the system uptime. The period between two interrupts is a unit of measure called \textit{tick}, while the frequency is called \textit{tick rate}; this value is internally defined as the constant \texttt{HZ}. If the value of \texttt{HZ} is 100, there are 100 ticks per second.
 
 \subsubsection{Choice of the tick rate}
 Changing the frequency of the timer interrupt can have a large impact on the behavior of the system, so there are pros and cons to larger or smaller values of \texttt{HZ}.
 
 %pros of larger HZ
-A larger \texttt{HZ} means that the timer interrupt has a finer granularity: this means that all the timed events also have a higher resolution, which allows to improve their accuracy. As an example, let's consider process preemption: with an higher tick rate we can improve the accuracy and reduce the scheduling latency. Suppose that a process has 2 milliseconds left of its timeslice and the timer interrupt has just occurred. With an \texttt{HZ} of 100 the next interrupt will occur in 10 milliseconds, giving the process 8 extra milliseconds. This means that another task has to wait for more time in the runqueue, and this can be an issue for time-sensitive tasks. With a larger \texttt{HZ}, for example 1000, in the worst case scenario the latency is only 1 millisecond.
+A larger \texttt{HZ} means that the timer interrupt has a finer granularity: this means that all the timed events also have a higher resolution, which allows to improve their accuracy. As an example, let's consider process preemption: with a higher tick rate we can improve the accuracy and reduce the scheduling latency. Suppose that a process has 2 milliseconds left of its timeslice and the timer interrupt has just occurred. With an \texttt{HZ} of 100 the next interrupt will occur in 10 milliseconds, giving the process 8 extra milliseconds. This means that another task has to wait for more time in the runqueue, and this can be an issue for time-sensitive tasks. With a larger \texttt{HZ}, for example 1000, in the worst case scenario the latency is only 1 millisecond.
 
 %cons of larger HZ
 There is also a drawback to increasing the tick rate: the interrupt handler gets executed more often, and this results in less processor time for the tasks. The actual impact of the increased overhead is debatable and depends heavily on the speed of the processor.
@@ -224,7 +224,7 @@ The value of \texttt{HZ} depends on hardware and on the kernel configuration. On
 \label{sched_clock}
 An important function is \verb|sched_clock()|: it returns the system's uptime in nanoseconds. An architecture may provide an implementation, but if it is not provided, the system will use the jiffies counter to calculate the system's uptime.
 
-The scheduler uses this function to determine the absolute, non-weighted, time that the current task has been running (\verb|se->runtime|). If the system uses the jiffies counter to determine this value, the maximum resolution of \verb|sched_clock()| depends on \texttt{HZ}. In this case the choice of \texttt{HZ} becomes more relevant.
+The scheduler uses this function to determine the absolute, non-weighted, time that the current task has been running (\verb|se->sum_exec_runtime|). If the system uses the jiffies counter to determine this value, the maximum resolution of \verb|sched_clock()| depends on \texttt{HZ}. In this case the choice of \texttt{HZ} becomes more relevant.
 The following is the default implementation of \verb|sched_clock()| when using only jiffies:
 \begin{code}
 unsigned long long __weak sched_clock(void)
@@ -364,7 +364,7 @@ In the following pieces of code, ``\verb|likely()|'' and ``\verb|unlikely()|'' a
 #define likely(x)       __builtin_expect(!!(x), 1)
 #define unlikely(x)     __builtin_expect(!!(x), 0)
 \end{code}
-These two macros are used in conditions. They indicate, respectively, that the condition is expected to be true or false. \verb|gcc| will then produce the correct assembly at compile time. If the guess is correct, less CPU cycles are used to choose the branch, but if it's not, the cycles are doubled. The double inversion (\verb|!!|) is to make sure the parameter is binary.
+These two macros are used in conditions. They indicate, respectively, that the condition is expected to be true or false. \verb|gcc| will then produce the correct assembly at compile time. If the guess is correct, less CPU cycles are used to choose the branch, but if it's not, the cycles are doubled. The double negation (\verb|!!|) is to make sure the parameter is binary.
 
 \subsubsection{scheduler\_tick}
 As stated earlier, this function is called by the interrupt handler at every system tick.
@@ -434,8 +434,8 @@ For each entity in the hierarchy starting from the leaf, the function calls:
     
     \item \verb|entity_tick(cfs_rq, se, queued)|. This updates the statistics of that entity, then checks if it has finished its time and if another entity deserves to run. This means that:
     \begin{enumerate}
-        \item If a process inside a group still deserves more time
-        \item but the entire group has finished its time
+        \item If a process inside a group still deserves more time,
+        \item but the entire group has finished its time,
         \item and another group deserves the CPU
     \end{enumerate}
     Then the task is preempted anyway. \verb|entity_tick()| also updates the load statistics used to balance the load between CPUs.
@@ -591,7 +591,7 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 		resched_curr(rq_of(cfs_rq));
 }
 \end{code}
-The first step is calculating \verb|ideal_runtime|. As the name suggests, this is the timeslice assigned to the task: remember that CFS's timeslice always varies dynamically.
+The first step is calculating \verb|ideal_runtime|. As the name suggests, this is the timeslice assigned to the task: remember that CFS's timeslice varies dynamically.
 
 If the task has run for more than the ideal runtime, the function \verb|resched_curr()| is called and it will cause the preemption of the task. The other way this function can trigger a reschedule, is if the difference between the virtual runtime of the current task and the smallest virtual runtime in the runqueue is bigger than the ideal runtime.
 
@@ -628,8 +628,8 @@ static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 \verb|sched_slice()| first calculates $target\_latency$ of equation \ref{eq:assigned_time}---also known as the \textit{scheduler period}. Remember that this value is defined as a period of time in which each task runs once, for at least \verb|sysctl_sched_min_granularity| nanoseconds. It is calculated through \verb|__sched_period()|.\label{sec:sched_period}
 Here, two important scheduler tunables are used:
 \begin{itemize}
-    \item \verb|sysctl_sched_min_granularity| -- the minimum time a task is be allowed to run on a CPU before being preempted.
-    \item \verb|sysctl_sched_latency| -- the default scheduler period.
+    \item \verb|sysctl_sched_min_granularity| -- The minimum time a task is allowed to run on a CPU before being preempted.
+    \item \verb|sysctl_sched_latency| -- The default scheduler period.
 \end{itemize}
 \begin{code}
 /*
@@ -667,8 +667,8 @@ When a process calls \verb|fork()| its \verb|task_struct| is duplicated and a ne
 This function sets the state of the task as \verb|TASK_RUNNING|, then, after initiating some values used for scheduling statistics, invokes \verb|activate_task()|. After the task has been activated and placed on the runqueue, \verb|wake_up_new_task| triggers the \verb|sched_wakeup_new| \label{trace:sched_wakeup_new} event. Lastly, this function calls \verb|check_preempt_curr()|, which will preempt the current task if another is more deserving. 
 
 \paragraph{check\_preempt\_curr}\label{check_preempt_curr}
-This function has a name that is very similar to\\ \verb|check_preept_tick|. It also has a similar function, but unlike \verb|check_preept_tick|, it is not periodic.
-This function compares the newly created task with the one currently running. The first thing it has to check is the scheduling class: a task of a lower priority class cannot preempt one of an higher class. On the other hand, if the new task has an higher priority, the \verb|resched_curr()| function is called, causing a reschedule.
+This function has a name that is very similar to\\ \verb|check_preept_tick|. It also has a similar purpose, but unlike \verb|check_preept_tick|, it is not periodic.
+This function compares the newly created task with the one currently running. The first thing it has to check is the scheduling class: a task of a lower priority class cannot preempt one of a higher class. On the other hand, if the new task has a higher priority, the \verb|resched_curr()| function is called, causing a reschedule.
 \begin{code}
 void check_preempt_curr(struct rq *rq, struct task_struct *p, int flags)
 {
@@ -724,10 +724,10 @@ If the current task needs to be rescheduled, \verb|check_preempt_wakeup()| calls
 
 Waking up a process is similar to creating a new one: the task is first inserted into the runqueue and then the system checks if the currently running task needs to be rescheduled.
 
-Before inserting the task into the runqueue, the \verb|sched_waking|\label{trace:sched_waking} event is triggered and the task's state is set to \verb|TASK_WAKING|. The task is then inserted into the runqueue by \verb|activate_task()|. Once it is on the runqueue, the \verb|task_struct->on_rq| field  is set to \verb|TASK_ON_RQ_QUEUED|. Finally, \verb|ttwu_do_wakeup()| is called, which checks if the current task can be preempted with \verb|check_preempt_curr()|; then it sets the task's state to \verb|TASK_RUNNING| and triggers the \verb|sched_wakeup|\label{trace:sched_wakeup} event.
+Before inserting the task into the runqueue, the \verb|sched_waking|\label{trace:sched_waking} event is triggered and the task's state is set to \verb|TASK_WAKING|. The task is then inserted into the runqueue by \verb|activate_task()|. Once it is on the runqueue, the \verb|task_struct->on_rq| field  is set to \verb|TASK_ON_RQ_QUEUED|. Finally, \verb|ttwu_do_wakeup()| (\verb|ttwu| = Try To Wake Up) is called, which checks if the current task can be preempted with \verb|check_preempt_curr()|; then it sets the task's state to \verb|TASK_RUNNING| and triggers the \verb|sched_wakeup|\label{trace:sched_wakeup} event.
 
 \paragraph{enqueue\_task()}
-Whether the task was just created or it was woken up from sleep, his \verb|task_struct| has to be added to the runqueue. This is done by the \verb|enqueue_task()| function. It takes as arguments a pointer \verb|rq| to the runqueue, a pointer \verb|p| to the \verb|task_struct| and an integer for the flags. It updates the \verb|cfs_rq| utilization statistics and invokes the \verb|enqueue_entity()| function that:
+Whether the task was just created or it was woken up from sleep, it has to be added to the runqueue. This is done by the \verb|enqueue_task()| function. It takes as arguments a pointer \verb|rq| to the runqueue, a pointer \verb|p| to the \verb|task_struct| and an integer for the flags. It updates the \verb|cfs_rq| utilization statistics and invokes the \verb|enqueue_entity()| function that:
 \begin{itemize}
     \item Calls \verb|update_curr()|, then adds \verb|cfs_rq->min_vruntime| to \verb|se->vruntime|. This is done because otherwise the new task would have a very small vruntime, which means huge boost compared to the other tasks. Note that the virtual runtime is decreased when dequeuing a task.
     \item Updates the load statistics of the entity and its group

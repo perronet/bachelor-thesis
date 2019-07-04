@@ -178,7 +178,7 @@ out:
 	return ret;
 }
 \end{code}
-\verb|stop_two_cpus()| stops the two CPUs and runs \verb|migrate_swap_stop| with arguments \verb|arg| on the first CPU, returns when both are done.
+\verb|stop_two_cpus()| stops the two CPUs and runs \verb|migrate_swap_stop()| with arguments \verb|arg| on the first CPU, returns when both are done.
 
 \paragraph{\texttt{trace\_sched\_wait\_task}}
 Tracepoint for waiting on task to unschedule.
@@ -1273,7 +1273,7 @@ static void delayed_put_task_struct(struct rcu_head *rhp){
 	put_task_struct(tsk);
 }
 \end{code}
-Deallocates \verb|task_struct|.
+This function is called from \verb|release_task()|, together they deallocate the \verb|task_struct|.
   
 \paragraph{\texttt{trace\_sched\_process\_exit}}
 Tracepoint for a task exiting. Located in the \verb|exit()| system call handler.
@@ -1473,7 +1473,7 @@ long _do_fork(unsigned long clone_flags,
 \verb|clone_flags| is the \verb|flags| parameter of the \verb|clone()| system call. With this parameter it's possible to spawn a thread or an entire new process. This event was mentioned in Section \ref{trace:sched_process_fork}.
     
 \paragraph{\texttt{trace\_sched\_process\_hang}}
-Detect hung task.
+Tracepoint for detecting a hung task. A hung task is a task stuck forever in the \verb|TASK_UNINTERRUPTIBLE| state.
 
 \textbf{Parameters}
 \begin{itemize}
@@ -1545,11 +1545,11 @@ static void check_hung_task(struct task_struct *t, unsigned long timeout){
 	touch_nmi_watchdog();
 }
 \end{code}
-Kernel thread for detecting tasks stuck in D state
+This function is used by kernel thread called \verb|khungtaskd| to check for hung tasks. This thread goes through all \verb|TASK_UNINTERRUPTIBLE| tasks every 2 minutes: any tasks that did not get scheduled in this time span are hung tasks. The check is done with the context switch counter (\verb|nvcsw|).
   
 \paragraph{\texttt{trace\_sched\_kthread\_*}(\texttt{stop/stop\_ret})}
 \begin{itemize}
-    \item \texttt{trace\_sched\_kthread\_stop} -- Tracepoint for calling \verb|kthread_stop|, performed to end a kthread.
+    \item \texttt{trace\_sched\_kthread\_stop} -- Tracepoint for calling \verb|kthread_stop|, performed to end a kthread. The event is triggered before the kthread actually stopped.
     \item \texttt{trace\_sched\_kthread\_stop\_ret} -- Tracepoint for the return value of the kthread stopping.
 \end{itemize}
 

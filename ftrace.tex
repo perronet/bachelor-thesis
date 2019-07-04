@@ -1,7 +1,7 @@
 \chapter{Tracing with ftrace}
 % Capitolo Marco Perronet
 \label{chap:ftrace}
-Kernel debugging is a big challenge even for experienced kernel developers. For example, one difficulty is that if the system has latencies or synchronization issues (undetected race conditions), it is really hard to pinpoint where these issues are originated. Which subsystems are involved? In which conditions does the problem arise? When the system is running, there is not always  a way to know the answer. Ftrace is a debugger designed specifically to solve the issue and to ease the developer's debuggin effort. Also, it is a great educational tool, not just to peek at what happens in the kernel, but also to help approach the source code by observing the function flow.
+Kernel debugging is a big challenge even for experienced kernel developers. For example, one difficulty is that if the system has latencies or synchronization issues (undetected race conditions), it is really hard to pinpoint where these issues are originated. Which subsystems are involved? In which conditions does the problem arise? When the system is running, there is not always a way to know the answer. Ftrace is a debugger designed specifically to solve the issue and to ease the developer's debugging effort. Also, it is a great educational tool, not just to peek at what happens in the kernel, but also to help approach the source code by observing the function flow.
 
 The name comes from ``function tracer'', which is one of its features among many others. Each mode of tracing is simply called a \textit{tracer}, and each one comes with many options to be tuned. They can do function tracing, event tracing, measure context switch time or the time in which interrupts are disabled. Ftrace is also very extensible because it is possible to write new tracers that can be added like a module.
 
@@ -11,9 +11,9 @@ As anticipated, one of the objectives of the thesis is to document events relate
 \section{How does it work?}
 \label{sec:how_does_it_work}
 
-Tracing means recording events that occur at runtime in order to analyze the code behavior and performance. More generally, this is called \textit{software profiling} ans it is implemented with different techniques. In our case, it is achieved by the means of \textit{code instrumentation}, which consists in adding instructions to the source code or its binary in order to profile it. There are two main ways of using ftrace, and they use two different instrumentation techniques:
+Tracing means recording events that occur at runtime in order to analyze the code behavior and performance. More generally, this is called \textit{software profiling} and it is implemented with different techniques. In our case, it is achieved by the means of \textit{code instrumentation}, which consists in adding instructions to the source code or its binary in order to profile it. There are two main ways of using ftrace, and they use two different instrumentation techniques:
 \begin{itemize}
-    \item Function tracing, using code instrumentation mechanism by \verb|gcc|, enabled by compiling with the \verb|-pg| flag; and
+    \item Function tracing, using code instrumentation mechanism by \verb|gcc|, enabled by compiling with the \verb|-pg| flag
     \item Event tracing, using \textit{tracepoints} in the source code.
 \end{itemize}
 Function tracing uses a form of dynamic profiling: this means that the tracing instructions can be toggled at runtime in the binary executable, without the need to recompile the code. The way this works is that, while compiling, \verb|gcc| adds extra \verb|NOP| (``No OPeration'') assembly instructions at the beginning of every function. The position of these instructions is then saved in the binary itself, so that it will be possible to change these \verb|NOP|s into something else, if needed. This is exactly what ftrace does: it toggles tracing by changing these instructions at runtime; they are converted to \verb|JMP| instructions to tracing functions, and then back to \verb|NOP| to disable tracing. For this reason, this instrumentation technique is called \textit{runtime injection}. This approach has two main advantages: 
@@ -38,7 +38,7 @@ AudioIPC-1849  [002] 21448.743174: sched_migrate_task:   comm=AudioIPC Client pi
 
 Notice how all the information can be found through the parameters: command, pid, runtime and priority can all be found directly into the \verb|task_struct|.
 
-So what do the tracing functions do, exactly? Ftrace uses a ring buffer to store all the events that are happening at runtime, so these functions will write new events in the buffer. Essentially, the producer is the kernel and the consumer is the user, which will read from user space (we will shortly see how). Because it's a circular buffer, all the old entries are overwritten if they are not read in time: this happens all the time with events because, since boot, they are written in the buffer even if nobody is reading. Another scenario in which entries are lost is when they are getting written faster than they are read: this is common when we trace every single function/event without any filters. It's generally good practice to filter as much as possible to avoid losing entries, which is possible with dynamic tracing, but not with static tracing. It's true that we can easily filter the trace output, but with static tracing the entries will be written in the buffer anyway, resulting in potential overwriting: this is why with function tracing we have true filtering, but not with event tracing.
+So what do the tracing functions do, exactly? Ftrace uses a ring buffer to store all the events that are happening at runtime, so these functions will write new events in the buffer. Essentially, the producer is the kernel and the consumer is the user, which will read from user space. Because it's a circular buffer, all the old entries are overwritten if they are not read in time: this happens all the time with events because, since boot, they are written in the buffer even if nobody is reading. Another scenario in which entries are lost is when they are getting written faster than they are read: this is common when we trace every single function/event without any filters. It's generally good practice to filter as much as possible to avoid losing entries, which is possible with dynamic tracing, but not with static tracing. It's true that we can easily filter the trace output, but with static tracing the entries will be written in the buffer anyway, resulting in potential overwriting: this is why with function tracing we have true filtering, but not with event tracing.
 
 
 \section{Interfacing with ftrace}
@@ -53,7 +53,7 @@ On Unix, system calls are not the only way to interact with the kernel. Another 
 \label{img:proc}
 \end{figure}
 
-If we were to write a user application to display processes; the alternative approach to get this information would be to use a special-purpose syscall, which is what BSD and MacOS do: the syscall will return a kernel structure with all the information that needs to be parsed. The approach used by Linux is more straightforward: the information is (mostly) in human-readable form, so you simply read the files in \verb|/proc| and parse the results as strings. By doing so, no syscall is needed, except, of course, \verb|open()| and \verb|read()| to interact with the filesystem. On Linux, commands such as \verb|ps|, \verb|top| or \verb|pgrep| are invoked,  they  internally  query the  \verb|procfs| filesystem. You could always do the same operation manually by doing something like \verb%cat /proc/1337/info_that_you_need | grep specific_info%, but it would be tedious: this is why utilities like \verb|ps| are convenient front-ends for the user.
+If we were to write a user application to display processes; the alternative approach to get this information would be to use a special-purpose syscall, which is what BSD and MacOS do: the syscall will return a kernel structure with all the information that needs to be parsed. The approach used by Linux is more straightforward: the information is (mostly) in human-readable form, so you simply read the files in \verb|/proc| and parse the results as strings. By doing so, no syscall is needed, except, of course, \verb|open()| and \verb|read()| to interact with the filesystem. On Linux, when commands such as \verb|ps|, \verb|top| or \verb|pgrep| are invoked, they internally query the  \verb|procfs| filesystem. You could always do the same operation manually by doing something like \verb%cat /proc/1337/info_that_you_need | grep specific_info%, but it would be tedious: this is why utilities like \verb|ps| are convenient front-ends for the user.
 
 There are also other specialized filesystems, for example \verb|sysfs|, which contains system information; but what iterests us is \verb|debugfs|, which contains kernel debug information and allows interatcion  with ftrace. This filesystem is mounted by executing \verb|mount -t debugfs nodev /sys/kernel/debug/|: since there is not an actual device that is being mounted, we use ``\verb|nodev|'' as target device; \verb|/sys/kernel/debug/| is the target mount point. In Figure \ref{img:tracing} you can see the trace folder located in this filesystem. To interact with ftrace you simply write in these files with \verb|echo your_value > file|: by doing this you can toggle options and set parameters before/during the trace. 
 
@@ -73,6 +73,7 @@ The purpose of some of these files is not to set options. Rather, it is to list 
 \label{img:tracers}
 \end{figure}
 
+\newpage %martellata
 Let's now see different ways to interact with ftrace:
 \begin{codebash}
 # Interfacing through an application program
@@ -132,7 +133,7 @@ In the kernel, every routine that starts with ``\verb|do_|'' is an interrupt han
       ls-4973  [000] d... 14386.662881: __do_page_fault <-page_fault
       ls-4973  [000] d... 14386.662900: __do_page_fault <-page_fault
 \end{Verbatim}
-As expected, we only see page faults (for a total of 92). This information is not that useful by itself, but what is useful, instead, are the timestamps: with these, it's easy to detect latencies in the kernel. By using kernelshark you can plot the trace in order to make latencies obvious; doing this can also be interesting because it lets you see which actions cause most overhead. Another way of doing this just with ftrace is to use the \verb|function_graph| tracer: it's similar to the \verb|function| tracer, but it shows the entry and exit point of each function, creating a function call graph. Instead of timestamps it shows the duration of each function execution. The symbols \verb|+|, \verb|!| \verb|#| are used whenever there is an execution time greater than 10, 100 and 1000 microseconds. As we know, scheduling and thread migration cause a lot of overhead, so we can try to use \verb|function_graph| to see it.
+As expected, we only see page faults (for a total of 92). This information is not that useful by itself, but what is useful, instead, are the timestamps: with these, it's easy to detect latencies in the kernel. By using \verb|kernelshark| you can plot the trace in order to make latencies obvious; doing this can also be interesting because it lets you see which actions cause most overhead. Another way of doing this just with ftrace is to use the \verb|function_graph| tracer: it's similar to the \verb|function| tracer, but it shows the entry and exit point of each function, creating a function call graph. Instead of timestamps it shows the duration of each function execution. The symbols \verb|+|, \verb|!| \verb|#| are used whenever there is an execution time greater than 10, 100 and 1000 microseconds. As we know, scheduling and thread migration cause a lot of overhead, so we can try to use \verb|function_graph| to see it.
 \begin{Verbatim}
  2)               |            schedule() {
  2)   0.033 us    |              rcu_note_context_switch();
@@ -178,7 +179,7 @@ The ftrace documentation says ``The function name is always displayed after the 
 \end{itemize}
 In general, it's better to narrow the filters as much as possible. For example, it would be good to trace only the function that we're interested in, and on one CPU only: in the next chapter, we will always trace this way in order to reduce noise.
 
-Let's try to trace only the \verb|schedule()| function, on all CPUS, just to see how much time it can take (on my machine, that is). We do this by executing: 
+Let's try to trace only the \verb|schedule()| function, on all CPUs, just to see how much time it can take (on my machine, that is). We do this by executing: 
 \begin{codebash}
 cd /sys/kernel/debug/tracing/
 echo schedule > set_graph_function
@@ -247,7 +248,7 @@ Function tracing is very useful and will come in handy to understand the code, b
 \begin{figure}[ht]
 \centering
 \includegraphics[width=0.9\textwidth]{images/shell_sched_event.png} 
-\caption{Control files for the sched\_switch event}
+\caption{Control files for the \texttt{sched\_switch} event}
 \label{img:sched_event}
 \end{figure}
 
@@ -258,7 +259,7 @@ Steven Rostedt explains pretty well why that is the case:
 
 \begin{figure}[ht]
 \includegraphics[width=\textwidth]{images/shell_sched_event_format.png} 
-\caption{Fields and print format of the sched\_switch event}
+\caption{Fields and print format of the \texttt{sched\_switch} event}
 \label{img:sched_event_format}
 \end{figure}
 
@@ -528,7 +529,7 @@ char *dog_to_string(enum dog_enums dog)
        return dog_strings[dog];
 }
 \end{code}
-By redefining the sub-macro \verb|C(a)| throughout the program, we change the behavior of \verb|DOGS|: this way, we generate different code with the same data. \verb|TRACE_EVENT()| does the same with its parameters, but performs this trick in a really weird way. Imagine that we had two different headers: \verb|generate_code.h| and \verb|change_behavior.h|. \\\verb|generate_code.h|:
+By redefining the sub-macro \verb|C(a)| throughout the program, we change the behavior of \verb|DOGS|: this way, we generate different code with the same data. \verb|TRACE_EVENT()| does the same with its parameters, but performs this trick in a really weird way. Imagine that we had two different headers: \verb|generate_code.h| and \verb|change_behavior.h|:\\\\\verb|generate_code.h|:
 \begin{enumerate}
     \item Uses the macro, expanding it and generating code with a given input data
     \item Does \verb|#include change_behavior.h|
@@ -539,7 +540,7 @@ By redefining the sub-macro \verb|C(a)| throughout the program, we change the be
     \item Does \verb|#include generate_code.h|, reincluding the header that just included it, which will generate new code
     \item Repeats the process many times
 \end{enumerate}
-This is exactly what we did with \verb|DOGS|, it's just not as easy to see what happens. With this technique it's easier to change the macro usage because we have two separate files, but the code is way harder to read. Let's use our module to illustrate the mechanism in actual kernel code.\\\verb|my_module|:
+This is exactly what we did with \verb|DOGS|, it's just not as easy to see what happens. With this technique it's easier to change the macro usage because we have two separate files, but the code is way harder to read. Let's use our module to illustrate the mechanism in actual kernel code.\\\verb|my_module.c|:
 \begin{code}
 #define CREATE_TRACE_POINTS
 #include "my_module_trace.h"
