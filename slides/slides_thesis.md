@@ -4,7 +4,7 @@ title:
 author:
 - Marco Perronet (Università degli Studi di Torino)
 institute:
-- Relatore:\ Enrico Bini
+- Thesis advisor:\ Enrico Bini
 date:
 - July 2019
 theme:
@@ -22,20 +22,20 @@ GNU/Linux is a free, open source and community developed operating system. Among
 
 ## Why is this important?
 Thanks to its open source nature, it's possible to study the code and get a full
-understanding of operating systems. This wasn't possible before GNU/Linux.
+understanding of operating systems.
 
 # Objectives
 
 1. Illustrate how scheduling works in a real operating system
-- Different scheduling algorithms used in the kernel
-- Implementation of the modern scheduler (CFS, the Completely Fair Scheduler)
+- Scheduling algorithms used in the kernel
+- Implementation of the current scheduler (CFS, the Completely Fair Scheduler)
 
 2. Write documentation for the scheduler events
 - `ftrace` usage (function and event tracing)
 
 # GNU/Linux
 <!-- Subsystems e separazione memoria -->
-![Userspace and Kernelspace](userspace_kernelspace.png){ width=250px }
+![Userspace and Kernelspace](images/userspace_kernelspace.png){ width=250px }
 
 ## Why "GNU/Linux"?
 
@@ -49,7 +49,7 @@ manage the hardware resources. Some of its roles are:
 
 - Responding to I/O requests
 - Managing memory allocation
-- Deciding how the CPU time is shared among the demanding processes (*scheduling*)
+- Deciding how CPU time is shared among the demanding processes (*scheduling*)
 <!-- Scheduling e subsystems -->
 
 <!-- The kernel needs to make the most out of hardware: its efficiency makes the difference between a fast or slow operating system. -->
@@ -132,33 +132,46 @@ In order to know which task deserves to run next, every task keeps track of the 
 
 ## Picking the next task
 
-When scheduling, CFS chooses the task with the smallest total runtime. However, this approach ignores the priorities of the tasks. Instead, the runtime of each task is weighted with its priority: we call this value *virtual runtime*.
+CFS is a Dynamic Priority scheduling policy. By using the runtime as priority, CFS chooses the task with the smallest total runtime. 
+
+To also take into account the \textit{nice} values of the tasks, the runtime of each task is weighted with its \textit{nice}: this value is called *virtual runtime*.
 
 # Completely Fair Scheduler (CFS)
 
 \begin{block}{Virtual runtime}
-\textit{Vruntime} is the absolute runtime of the task, weighted based on task priority. For high priority tasks, vruntime is less than
-the real time spent on the CPU. In this case, vruntime grows slower than real time. The opposite is true for low priority tasks.
+\textit{Vruntime} is the runtime of the task, weighted based on \textit{nice}. For high priority tasks (low \textit{nice} value), vruntime is less than
+the real time spent on the CPU. In this case, vruntime grows slower than real time. The opposite is true for low priority tasks (high \textit{nice} value).
 \end{block}
 
 The runqueue is implemented through a red-black tree, which is ordered with the virtual runtime.
 
 # Completely Fair Scheduler (CFS) 
+
+\begin{equation}
+  weight = \dfrac{1024}{(1.25)^{nice}}.
+  \label{eq:weight_nice}
+\end{equation}
+
+\begin{figure}[tb]
+\includegraphics[width=.75\textwidth]{images/weight.png}
+\end{figure}
+
+# Completely Fair Scheduler (CFS) 
 <!-- queste equazioni sono applicate uguali nel codice -->
 <!-- lo scheduler period è calcolato con la funzione __sched_period() vista prima-->
-Both the timeslice and the absoulte runtime (delta\_exec) must be weighted.
+Both the timeslice and the runtime must be weighted.
 
 <!-- The timeslice is not fixed and varies for each process -->
+<!-- target latency = scheduler period -->
 \begin{equation} 
     assigned\_time = target\_latency \frac{task\_weight}{total\_weight}
 \end{equation}
-
 \begin{equation}
-    vruntime = delta\_exec \frac{weight\_of\_nice\_0}{task\_weight}
+    vruntime = runtime \frac{weight\_of\_nice\_0}{task\_weight}
 \end{equation}
 
-- *Equation 1 ensures fairness*: the task's timeslice is proportional to its weight 
-- *Equation 2 ensures good interactivity*: interactive tasks will have a low vruntime, and will be often picked by CFS
+- *Equation 2 ensures fairness*: the task's timeslice is proportional to its weight 
+- *Equation 3 is for interactivity*: tasks with a higher priority modifier will have a low vruntime, and will be picked more often by the scheduler
 
 # `ftrace` (Function tracer)
 
@@ -179,7 +192,7 @@ Based on static tracepoints in the code, which are called just like functions. U
 
 - Thanks to code instrumentation, function tracing creates zero overhead when it's not used.
 
-- It’s possible to filter what is being traced: we can dynamically activate
+- It’s possible to filter what is being traced by dynamically activating
 tracing only on functions from a single subsystem, or on one function alone.
 
 ### Code instrumentation
@@ -219,6 +232,12 @@ At compile time, extra assembly instructions are generated to help debuggers and
 Event tracing is performed at specific points in the code known as *tracepoints*. It’s less efficient than function tracing because it doesn’t use runtime injection.
 
 Tracepoint functions are generated by the `TRACE_EVENT(...)` macro, which allows developers to quickly declare their own events to trace from outside the kernel.
+
+## Why not just use `printk()` ?
+
+* Tracepoints are more efficient: it is faster to write in `ftrace`'s ring buffer than in standard output.
+* When debugging the scheduler or other high-volume areas, `printk()`'s overhead can introduce heisenbugs or even create a live lock.
+* Output from tracepoints can be quickly filtered by selectively toggling them from userspace.
 
 # Event tracing
 
@@ -268,14 +287,14 @@ static void update_curr(struct cfs_rq *cfs_rq) {
 # Interfacing with `ftrace`
 
 \begin{figure}[tb]
-\includegraphics[width=\textwidth]{shell_proc.png}
+\includegraphics[width=\textwidth]{images/shell_proc.png}
 \caption{The \texttt{procfs} special filesystem}
 \end{figure}
 
 # Interfacing with `ftrace`
 
 \begin{figure}[tb]
-\includegraphics[width=\textwidth]{shell_sched.png}
+\includegraphics[width=\textwidth]{images/shell_sched.png}
 \caption{Scheduler events in the \texttt{tracefs} special filesystem}
 \end{figure}
 
@@ -289,10 +308,10 @@ static void update_curr(struct cfs_rq *cfs_rq) {
 
 # KernelShark
 
-![Function tracing with KernelShark](ks_function.png)
+![Function tracing with KernelShark](images/ks_function.png)
 
 # KernelShark
 
-![Event tracing with KernelShark](ks_event.png)
+![Event tracing with KernelShark](images/ks_event.png)
 
 # Thank you!
