@@ -16,22 +16,15 @@ header-includes:
   - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\},fontsize=\scriptsize,frame=single,framesep=2mm,breakafter=d,linenos}
 ---
 
-# GNU/Linux
-
-GNU/Linux is a free, open source and community developed operating system. Among GNU/Linux versions, Android is the most popular today, running on most smartphone devices.
-
-## Why is this important?
-Thanks to its open source nature, it's possible to study the code and get a full
-understanding of operating systems.
-
 # Objectives
 
 1. Illustrate how scheduling works in a real operating system
-- Scheduling algorithms used in the kernel
 - Implementation of the current scheduler (CFS, the Completely Fair Scheduler)
+- Comparison with the previous schedulers
 
 2. Write documentation for the scheduler events
-- `ftrace` usage (function and event tracing)
+- Function and event tracing
+- `ftrace` usage
 
 # GNU/Linux
 <!-- Subsystems e separazione memoria -->
@@ -128,13 +121,17 @@ static u64 __sched_period(unsigned long nr_running) {
 
 CFS tries to model an ideal multi-tasking CPU where each task runs for the same amount of time. Total fairness would mean that with $n$ tasks, every task receives $\frac{1}{n}$ of the processor’s time.
 
-In order to know which task deserves to run next, every task keeps track of the total amount of time that it has spent running (*runtime*). 
+CFS is a Dynamic Priority scheduling policy. In order to know which task deserves to run next, every task keeps track of the total amount of time that it has spent running (*runtime*). This
+value is used as priority.
 
 ## Picking the next task
 
-CFS is a Dynamic Priority scheduling policy. By using the runtime as priority, CFS chooses the task with the smallest total runtime. 
+Being as fair as possible with all the task means
+keeping all the tasks’ runtimes as close as possible to each other.
 
-To also take into account the \textit{nice} values of the tasks, the runtime of each task is weighted with its \textit{nice}: this value is called *virtual runtime*.
+Following this logic, the task that deserves more than anyone to be executed 
+next is the one with the smallest runtime.
+<!-- To also take into account the \textit{nice} values of the tasks, the runtime of each task is weighted with its \textit{nice}: this value is called *virtual runtime*. -->
 
 # Completely Fair Scheduler (CFS)
 
@@ -170,8 +167,8 @@ Both the timeslice and the runtime must be weighted.
     vruntime = runtime \frac{weight\_of\_nice\_0}{task\_weight}
 \end{equation}
 
-- *Equation 2 ensures fairness*: the task's timeslice is proportional to its weight 
-- *Equation 3 is for interactivity*: tasks with a higher priority modifier will have a low vruntime, and will be picked more often by the scheduler
+- *Equation 2*: the task's timeslice is proportional to its weight.
+- *Equation 3*: tasks with a higher priority modifier will have a low vruntime, and will be picked more often by the scheduler.
 
 # `ftrace` (Function tracer)
 
